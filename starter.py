@@ -6,7 +6,7 @@ import os
 import time
 import db
 
-br_name="vbr0"
+br_name="vbr0" # are 192.168.100.1
 
 dhcp_keyname = "omapi_key"
 dhcp_secret = "KaekLmmyUj2RLvC8c1lj15AJ3gOIScUo/PjabCirckCw1lxSAj0hyIEASRaptg3gk33XHUrglPzQK1len7LhMQ=="

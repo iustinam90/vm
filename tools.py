@@ -6,6 +6,8 @@ import creator
 import starter
 #too.. to parse it twice
 
+id_range_limit=500
+
 def_db_path="vm.db"
 #base_disc_location="/var/lib/libvirt/images/"
 base_domain_location="/etc/libvirt/qemu/"
@@ -65,9 +67,9 @@ class VMTools:
         if(not self.verify('isadmin',{'who':self.real_uid})):
             return "Not allowed"
         try: 
-            for ugname in args['user_group_s']['ugnames']:
+            for ugname in args['user_group_s']['names']:
                 self.db.deleteRowsWithCriteria("UserGroup",'and',{'name':ugname}) 
-            for ugid in args['user_group_s']['ugids']:
+            for ugid in args['user_group_s']['ids']:
                 self.db.deleteRowsWithCriteria("UserGroup",'and',{'id':ugid}) 
         except db.DatabaseException as e:
             return e.err
@@ -114,9 +116,9 @@ class VMTools:
         if(not self.verify('isadmin',{'who':self.real_uid})):
             return "Not allowed"
         try: 
-            for ugname in args['vm_group_s']['vmgnames']:
+            for ugname in args['vm_group_s']['names']:
                 self.db.deleteRowsWithCriteria("VMGroup",'and',{'name':ugname}) 
-            for ugid in args['vm_group_s']['vmgids']:
+            for ugid in args['vm_group_s']['ids']:
                 self.db.deleteRowsWithCriteria("VMGroup",'and',{'id':ugid}) 
         except db.DatabaseException as e:
             return e.err
@@ -252,11 +254,12 @@ class VMTools:
     # user user_group_s vm vm_group
     # users can only see the perms that their uid/gids have
     def listPerms(self,args):
-        if(not self.verify('isadmin',{'who':self.real_uid})):
-            return "Not allowed"
         self._initDB()
         try: 
-            rows=self.db.getRowsWithCriteria('Permission','*', '', {})
+            if(self.verify('isadmin',{'who':self.real_uid})):
+                rows=self.db.getRowsWithCriteria('Permission','*', '', {})
+            else:
+                rows=self.db.getRowsWithCriteria('Permission','*', 'and', {'user_g_id':self.real_uid})
             # Permission (user_g_id integer, vm_g_id integer, run integer, modify integer, derive integer, force_isolated integer)
             print '-'*separator_len
             print "%-5s %-4s %-4s %-6s %-6s %-14s"%('uid','vmid','run','modify','derive','force_isolated')
@@ -345,13 +348,14 @@ class VMTools:
         # create domain /clone domain and change uuid name stordir..#todo
 
         # insert in db
+        # todo
         gid_list=[1] # default add to group all_vms
         if(args['vm_group_s']):
             pass #todo append in list
         
         # VM (id, name, owner_id, gid_list, storage,derivable, base_uuid,mac,ip,vnc,desc,started)
         try:
-            new_id=self.db.genNextId('VM')
+            new_id=self.db.genNextId('VM','>')
             row=(new_id,args['name'],self.real_uid,str(tuple(gid_list)),str(storage),args['derivable'],base_id,"","","",args['desc'],0)
             print row
             self.db.insert('VM', row) # throws exc if name/id dupl
@@ -387,11 +391,14 @@ class VMTools:
         
 
     def listVM(self,args):
-        if(not self.verify('isadmin',{'who':self.real_uid})):
-            return "Not allowed"
         self._initDB()
-        try: 
-            rows=self.db.getRowsWithCriteria('VM','*', '', {})
+        try:
+            if(self.verify('isadmin',{'who':self.real_uid})):
+                rows=self.db.getRowsWithCriteria('VM','*', '', {})
+            else:
+                # todo user can see vms that he has perm on too..i think
+                rows=self.db.getRowsWithCriteria('VM','*', 'and', {'owner_id':self.real_uid})
+            
             #VM (id, name, owner_id, gid_list, storage,derivable, base_id,mac,ip,vnc,desc,started)
             print '-'*separator_len
             print "%-5s %-22s %-10s %-10s %-11s %-9s %-30s %s"%('vmid','name','owner_id','vm_groups',
@@ -405,11 +412,12 @@ class VMTools:
         return
     
     def listMapping(self,args):
-        if(not self.verify('isadmin',{'who':self.real_uid})):
-            return "Not allowed"
         self._initDB()
-        try: 
-            rows=self.db.getRowsWithCriteria('Mapping','*', '', {})
+        try:
+            if(self.verify('isadmin',{'who':self.real_uid})):
+                rows=self.db.getRowsWithCriteria('Mapping','*', '', {})
+            else:
+                rows=self.db.getRowsWithCriteria('Mapping','*', 'and', {'user_g_id':self.real_uid}) 
             #Mapping (user_g_id integer, vm_g_id integer, ip text, mac text, isolated integer,exechost text, vncport integer,tap text, date text)
             print '-'*separator_len
             print "%-6s %-5s %-16s %-18s %-9s %-23s %-5s %-5s %-21s"%('uid','vmid','ip','mac','isolated','exechost','vnc','tap','date')

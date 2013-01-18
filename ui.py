@@ -5,7 +5,6 @@ import os
 import re
 import tools
 
-id_range_limit=1000
 
 class VMUserInterface:
     def __init__(self,vmtools,real_uid):
@@ -46,7 +45,7 @@ class VMUserInterface:
         self.parser.add_option("--udel",dest="user_del",action='store_true',help="delete user ",default=False)
         self.parser.add_option("--umod",dest="user_mod",action='store_true',help="modify user ",default=False)
         self.parser.add_option("--maxrun",dest="maxrun",help="",default=2)
-        self.parser.add_option("--maxstor",dest="maxstor",help="",default="13G")
+        self.parser.add_option("--maxstor",dest="maxstor",help="",default="133G")
         self.parser.add_option("--stordir",dest="storage_dir",help="add user group")
         self.parser.add_option("--ulist",dest="user_list",action='store_true',default=False,help="list users with diff criteria")
         self.parser.add_option("--str",dest="string_to_find",help="")
@@ -56,7 +55,7 @@ class VMUserInterface:
         self.parser.add_option("--vmmod",dest="vm_mod",action='store_true',help="modify vm ",default=False)
         self.parser.add_option("--vmrun",dest="vm_run",action='store_true',help="modify vm ",default=False)
         self.parser.add_option("--usediscs",dest="use_discs",help="eg. '/path/file1.qcow1,/path/file2.qcow1 (first is used to boot)")
-        self.parser.add_option("--stor",dest="storage",help="eg. '5G,500M (creates 2 discs), '3G' (one disc) or wtv.",default="5G")
+        self.parser.add_option("--stor",dest="storage",help="eg. '5G,500M (creates 2 discs), '3G' (one disc) or wtv.")
         self.parser.add_option("--smp",dest="smp",help="# processors, default 1",default=1)
         self.parser.add_option("--mem",dest="mem",help="memory in megabytes (eg '512' or '512M','1G'), default 512",default="1G")
         self.parser.add_option("--isolate",dest="isolate",action='store_true',help="Isolates vm from the others",default=False)
@@ -78,31 +77,222 @@ class VMUserInterface:
 
         (self.opts,args)=self.parser.parse_args()
     
+    ############################################################################################## 
+
+    def name_ok(self,name):
+        rex1=re.compile(r"^[a-zA-Z_0-9]+$")
+        if(name and rex1.match(name) and len(name)<=50):
+            return True
+        return False
     
-    def check_vm_add(self):
-        # vrfy base/storage exclusive and  mandatory, name mandatory,  derivable/base ori una ori niciuna
-        # validate storage format numberM|G , convert to list and into M
-        rex1=re.compile(r"[1-9][0-9]*[MG]")
-        #print self.opts['storage']
-        sizes=self.opts_dict['storage'].split(',')
-        newsizes=[]
-        for size in sizes:
-            if(rex1.match(size)):
-                if(size[-1]=='G'):
-                    newsizes.append(int(size[:-1]+"000"))
-                else:
-                    newsizes.append(int(size[:-1]))
-        if(len(newsizes)<1):
-            print "Invalid storage"
+    # comparison is '<' or '>'
+    def id_number_ok(self,number,comparison):
+        rex2=re.compile(r"^[0-9]+$")
+        if(not number or not rex2.match(str(number)) or len(str(number))>6):
             return False
-        self.opts_dict['storage']=newsizes
-        
-        # use_discs #todo check if list of valid qcow2 existing paths
-        if(self.opts_dict['use_discs']):
-            self.opts_dict['use_discs']=self.opts_dict['use_discs'].split(',')
-        
+        if(comparison=='>'):
+            if(int(number)<tools.id_range_limit): return False
+        elif(comparison=='<'):
+            if(int(number)>tools.id_range_limit): return False
+        else:
+            print "comparison sign incorrect"; exit(1)
+        return True
+    
+    # for checking mixtures of ids and names, 
+    # in: "nume1,12,nume2,
+    # returns {'ids':[1,2..],'names':[name1,name2..]}
+    def list_ok(self,mixed_list,comparison):
+        if(not mixed_list):
+            return False
+        ids=[]
+        names=[]
+        for item in mixed_list.split(','):
+            if(self.id_number_ok(item,comparison)):
+                ids.append(int(item))
+            if(self.name_ok(item)):
+                names.append(item)
+        if(len(ids)==0 and len(names)==0):
+            print "Nothing valid in your list"
+            return False
+        return {'ids':ids,'names':names}
+            
+    # validate memory/disc size: 1G,100M 
+    # ! returns size in M
+    def size_ok(self,size):
+        rex1=re.compile(r"[1-9][0-9]*[MG]")
+        if(rex1.match(size)):
+            if(size[-1]=='G'):
+                return int(size[:-1]+"000")
+            elif(size[-1]=='M'):
+                return int(size[:-1])
+        return False
+    
+    def path_ok(self,path,is_qcow):
+        if(not path or not os.path.exists(path)):
+            return False
+        if(is_qcow):
+            if(not commands.getstatusoutput("file {0} |grep 'Qemu Image,'".format(path))[1]):
+                return False
+        return True
+    ############################################################################################## 
+    
+    def check_init(self):
+        if(not self.path_ok(os.path.dirname(self.opts_dict['dbpath']), 0)):
+            print "Invalid action. Usage: --init --dbpath _ (please provide a valid path (including filename) where database will be created)"
+            return False
+        return True
+    
+    def check_user_group_add(self):
+        if(not self.name_ok(self.opts_dict['name']) or not self.id_number_ok(self.opts_dict['user_group_id'], '<')):
+            print "Invalid action. Usage: --ugadd --name _ --ugid _  (name allowed characters: 0-9a-zA-Z_)"
+            return False
+        self.opts_dict['user_group_id']=int(self.opts_dict['user_group_id'])
         return True
         
+    def check_user_group_del(self):
+        filteredDict=self.list_ok(self.opts_dict['user_group_s'],'<')
+        if(not filteredDict):
+            print "Invalid action. Usage: --ugdel --ug _id/name[,..]"
+            return False
+        self.opts_dict['user_group_s']=filteredDict
+        return True
+    
+    def check_user_group_mod(self):
+        if(not (self.name_ok(self.opts_dict['user_group_s']) or self.id_number_ok(self.opts_dict['user_group_s'], '<')) or
+            not  self.name_ok(self.opts_dict['name']) ):
+            print "Invalid action. Usage: --ugmod --ug _id/name --name _ (name allowed characters: 0-9a-zA-Z_)"
+            return False
+        return True
+    ############################################################################################## 
+    
+    def check_vm_group_add(self):
+        if(not self.name_ok(self.opts_dict['name']) or not self.id_number_ok(self.opts_dict['vm_group_id'], '<')):
+            print "Invalid action. Usage: --vmgadd --name _ --vmgid _  (name allowed characters: 0-9a-zA-Z_)"
+            return False
+        self.opts_dict['vm_group_id']=int(self.opts_dict['vm_group_id'])
+        return True
+        
+    def check_vm_group_del(self):
+        filteredDict=self.list_ok(self.opts_dict['vm_group_s'],'<')
+        if(not filteredDict):
+            print "Invalid action. Usage: --vmgdel --vmg _id/name[,..]"
+            return False
+        self.opts_dict['vm_group_s']=filteredDict
+        return True
+    
+    def check_vm_group_mod(self):
+        if(not (self.name_ok(self.opts_dict['vm_group_s']) or self.id_number_ok(self.opts_dict['vm_group_s'], '<')) or
+           not  self.name_ok(self.opts_dict['name']) ):
+            print "Invalid action. Usage: --vmgmod --vmg _id/name[,..] --name _ (name allowed characters: 0-9a-zA-Z_)"
+            return False
+        return True
+    ############################################################################################## 
+
+    def check_user_add(self):
+        print self.id_number_ok(self.opts_dict['user_id'],'>')
+        print self.path_ok(self.opts_dict['storage_dir'], 0)
+        if(not self.name_ok(self.opts_dict['name']) or not self.id_number_ok(self.opts_dict['user_id'],'>')
+           or not self.path_ok(self.opts_dict['storage_dir'], 0)):
+            print "Invalid action. Usage: --uadd --name _ --uid _ --stordir _ [-ug _id1/name1,..  --maxrun _(def=2) --maxstor _(def=133G) ]"
+            return False
+        #optional params
+        if(self.opts_dict['user_group_s']):
+            filteredDict=self.list_ok(self.opts_dict['user_group_s'],'<')
+            if(not filteredDict):
+                print "Invalid user group list"
+                return False
+            self.opts_dict['user_group_s']=filteredDict
+        if(self.opts_dict['maxstor']):
+            size=self.size_ok(self.opts_dict['maxstor'])
+            if(not size):
+                print "Invalid size for maximum storage"
+                return False
+            self.opts_dict['maxstor']=size
+        if(self.opts_dict['maxrun'] and not self.id_number_ok(self.opts_dict['maxrun'], '<')):
+            print "Invalid number for maximum running VMs"
+            return False
+        return True
+    
+    def check_user_del(self):
+        filteredDict=self.list_ok(self.opts_dict['user'],'<')
+        if(not filteredDict):
+            print "Invalid action. Usage:--udel --user _id/name[,..]"
+            return False
+        self.opts_dict['user']=filteredDict
+        return True
+    
+    def check_user_mod(self):
+        return True
+    
+    def check_user_list(self):
+        return True
+    ############################################################################################## 
+    
+    def check_vm_add(self):
+        #  name mandatory
+        if(not self.name_ok(self.opts_dict['name'])):
+            print "Invalid name"
+            return False
+        # use_discs #todo check if list of valid qcow2 existing paths
+        one=0 # check if only one of use_discs|storage|base was specified
+        if(self.opts_dict['use_discs']):
+            one=1
+            paths=self.opts_dict['use_discs'].split(',')
+            self.opts_dict['use_discs']=[]
+            self.opts_dict['use_discs']
+            for path in paths:
+                if(self.path_ok(path,1)):
+                    self.opts_dict['use_discs'].append(path)
+        if(self.opts_dict['storage']): # validate storage format numberM|G , convert to list and into M
+            if(one): print "Please specify only one of these: --base --stor --usediscs"
+            else: one=1
+            newsizes=[]
+            for size_str in self.opts_dict['storage'].split(','):
+                size_int=self.size_ok(size_str)
+                if(size_int):
+                    newsizes.append(size_int)
+            if(len(newsizes)<1):
+                print "Invalid storage"
+                return False
+            self.opts_dict['storage']=newsizes
+        if(self.opts_dict['base']):
+            if(one): print "Please specify only one of these: --base --stor --usediscs"
+            else: one=1
+            if(not (self.id_number_ok(self.opts_dict['base'], '>') or self.name_ok(self.opts_dict['base']))):
+                print "Invalid base VM"
+                return False
+        # optional stuff 
+        if(self.opts_dict['vm_group_s']):
+            if(not (self.id_number_ok(self.opts_dict['vm_group_s'],'<') or self.name_ok(self.opts_dict['vm_group_s']))):
+                print "Invalid VM group."
+                return False
+        if(self.opts_dict['desc']):
+            if(not self.name_ok(self.opts_dict['desc'])):
+                print "Invalid description.(maximum lenght 50 characters, [a-zA-Z0-9_]+)"
+                return False
+        if(self.opts_dict['derivable'] and self.opts_dict['base']):
+            print "Invalid option combination: --derivable and --base "
+            return False
+        return True
+    
+    def check_vm_run(self):
+        if(not (self.name_ok(self.opts_dict['vm']) or self.id_number_ok(self.opts_dict['vm'], '>'))):
+            print "Invalid action. Usage: --vmrun --vm _id/name [--mem _ --smp _ --install --cdrom _ --isolate]"
+            return False
+        if(self.opts_dict['mem']):
+            if(not self.size_ok(self.opts_dict['mem'])):
+                print "Invalid size for --mem"
+                return False
+        if(self.opts_dict['smp']):
+            if(not self.id_number_ok(self.opts_dict['smp'], '<')):
+                print "Invalid size for --smp"
+                return False
+        if(self.opts_dict['install'] and not self.path_ok(self.opts_dict['cdrom'], 0)):
+            print "Invalid option combination: --install requires a valid --cdrom path"
+            return False
+        return True
+    ##############################################################################################
+    
     def check_permset(self):
         #todo 
         # self.opts_dict['use_discs'] is like "+m,-d,+r,-i"
@@ -128,86 +318,12 @@ class VMUserInterface:
         self.opts_dict['permset']=permdict
         print permdict
         return True
+    ##############################################################################################
     
-    def check_user_group_add(self):
-        rex1=re.compile(r"[a-zA-Z_0-9]+")
-        rex2=re.compile(r"[0-9]+")
-        if(not self.opts_dict['name'] or not self.opts_dict['user_group_id'] or 
-           not rex1.match(self.opts_dict['name']) or not rex2.match(self.opts_dict['user_group_id']) or 
-           not int(self.opts_dict['user_group_id'])<id_range_limit):
-            print "Invalid action. Usage: --ugadd --name _ --ugid _  (name allowed characters: 0-9a-zA-Z_)"
-            return False
-        return True
-        
-    def check_user_group_del(self):
-        if(not self.opts_dict['user_group_s']):
-            print "Invalid action. Usage: --ugdel --ug _id/name[,..]"
-            return False
-        rex1=re.compile(r"[a-zA-Z_0-9]+")
-        rex2=re.compile(r"[0-9]+")
-        ugids=[]
-        ugnames=[]
-        for ug in self.opts_dict['user_group_s'].split(','):
-            if(rex2.match(ug)):
-                ugids.append(ug)
-            elif(rex1.match(ug)):
-                ugnames.append(ug)
-        if(len(ugids)==0 and len(ugnames)==0):
-            print "Nothing to delete, maybe your (list of) group(s) is invalid"
-            return False
-        self.opts_dict['user_group_s']={'ugids':ugids,'ugnames':ugnames}
-        return True
-    
-    def check_user_group_mod(self):
-        rex1=re.compile(r"[a-zA-Z_0-9]+")
-        rex2=re.compile(r"[0-9]+")
-        if(not self.opts_dict['user_group_s'] or not self.opts_dict['name'] or
-           not (rex1.match(self.opts_dict['user_group_s']) or rex2.match(self.opts_dict['user_group_s'])) or
-           not rex1.match(self.opts_dict['name']) ):
-            print "Invalid action. Usage: --ugmod --ug _id/name[,..] --name _ (name allowed characters: 0-9a-zA-Z_)"
-            return False
-        return True
-    
-    def check_vm_group_add(self):
-        rex1=re.compile(r"[a-zA-Z_0-9]+")
-        rex2=re.compile(r"[0-9]+")
-        if(not self.opts_dict['name'] or not self.opts_dict['vm_group_id'] or 
-           not rex1.match(self.opts_dict['name']) or not rex2.match(self.opts_dict['vm_group_id']) or 
-           not int(self.opts_dict['vm_group_id'])<id_range_limit):
-            print "Invalid action. Usage: --vmgadd --name _ --vmgid _  (name allowed characters: 0-9a-zA-Z_)"
-            return False
-        return True
-        
-    def check_vm_group_del(self):
-        if(not self.opts_dict['vm_group_s']):
-            print "Invalid action. Usage: --vmgdel --vmg _id/name[,..]"
-            return False
-        rex1=re.compile(r"[a-zA-Z_0-9]+")
-        rex2=re.compile(r"[0-9]+")
-        vmgids=[]
-        vmgnames=[]
-        for ug in self.opts_dict['vm_group_s'].split(','):
-            if(rex2.match(ug)):
-                vmgids.append(ug)
-            elif(rex1.match(ug)):
-                vmgnames.append(ug)
-        if(len(vmgids)==0 and len(vmgnames)==0):
-            print "Nothing to delete, maybe your (list of) group(s) is invalid"
-            return False
-        self.opts_dict['vm_group_s']={'vmgids':vmgids,'vmgnames':vmgnames}
-        return True
-    
-    def check_vm_group_mod(self):
-        rex1=re.compile(r"[a-zA-Z_0-9]+")
-        rex2=re.compile(r"[0-9]+")
-        if(not self.opts_dict['vm_group_s'] or not self.opts_dict['name'] or
-           not (rex1.match(self.opts_dict['vm_group_s']) or rex2.match(self.opts_dict['vm_group_s'])) or
-           not rex1.match(self.opts_dict['name']) ):
-            print "Invalid action. Usage: --vmgmod --vmg _id/name[,..] --name _ (name allowed characters: 0-9a-zA-Z_)"
-            return False
-        return True
-        
     def validateArgs(self,action): 
+        if(action=='init'):
+            return self.check_init()
+        
         if(action=='user_group_add'):
             return self.check_user_group_add()
         if(action=='user_group_del'):
@@ -222,11 +338,23 @@ class VMUserInterface:
         if(action=='vm_group_mod'):
             return self.check_vm_group_mod()
         
+        if(action=='user_add'):
+            return self.check_user_add()
+        if(action=='user_del'):
+            return self.check_user_del()
+        if(action=='user_mod'):
+            return self.check_user_mod()
+        if(action=='user_list'):
+            return self.check_user_list()
+        
         if(action=='vm_add'):
             return self.check_vm_add()
+        if(action=='vm_run'):
+            return self.check_vm_run()
         if(action=='permset'):
             return self.check_permset()
         return True # False #todo!!
+    ##############################################################################################
     
     # vrfy command arguments and call the controller
     def extractCommand(self):

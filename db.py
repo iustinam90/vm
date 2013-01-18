@@ -208,12 +208,15 @@ class VMDatabase:
                                   (uid,))
         return cursor.fetchall()
      
-    def genNextId(self,table):
+    def genNextId(self,table,sign):
         cursor=self._conn.execute('select max(id) from {0}'.format(table))
-        max=cursor.fetchone()[0]
-        if(not max):
-            max=0
-        return int(max)+1
+        maxx=cursor.fetchone()[0]
+        if(not maxx):
+            if(sign=='>'):
+                maxx=1000
+            elif(sign=='<'):
+                maxx=0
+        return int(maxx)+1
     
 ################################################################################# test area
 
