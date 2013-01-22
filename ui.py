@@ -3,12 +3,13 @@ from optparse import OptionParser
 import commands
 import os
 import re
-import tools
+import controller
 
+debug=1
 
 class VMUserInterface:
-    def __init__(self,vmtools,real_uid):
-        self.vmtools=vmtools
+    def __init__(self,vmcontroller,real_uid):
+        self.vmcontroller=vmcontroller
         self.parser=OptionParser()
         self.opts=None
         self.real_uid=real_uid
@@ -74,6 +75,7 @@ class VMUserInterface:
         self.parser.add_option("--permlist",dest="permlist",action='store_true',help="list permissions",default=False)
         # Mappings
         self.parser.add_option("--maplist",dest="maplist",action='store_true',help="list existing mappings in db",default=False)
+        self.parser.add_option("--mapdel",dest="mapdel",action='store_true',help="delete mappings in db",default=False)
 
         (self.opts,args)=self.parser.parse_args()
     
@@ -91,9 +93,9 @@ class VMUserInterface:
         if(not number or not rex2.match(str(number)) or len(str(number))>6):
             return False
         if(comparison=='>'):
-            if(int(number)<tools.id_range_limit): return False
+            if(int(number)<controller.id_range_limit): return False
         elif(comparison=='<'):
-            if(int(number)>tools.id_range_limit): return False
+            if(int(number)>controller.id_range_limit): return False
         else:
             print "comparison sign incorrect"; exit(1)
         return True
@@ -134,6 +136,12 @@ class VMUserInterface:
             if(not commands.getstatusoutput("file {0} |grep 'Qemu Image,'".format(path))[1]):
                 return False
         return True
+    
+    def ip_range_ok(self,iprange):
+        if(not iprange):
+            return False
+        #todo check format
+        return True
     ############################################################################################## 
     
     def check_init(self):
@@ -166,7 +174,8 @@ class VMUserInterface:
     ############################################################################################## 
     
     def check_vm_group_add(self):
-        if(not self.name_ok(self.opts_dict['name']) or not self.id_number_ok(self.opts_dict['vm_group_id'], '<')):
+        if(not self.name_ok(self.opts_dict['name']) or not self.id_number_ok(self.opts_dict['vm_group_id'], '<')
+           or not self.ip_range_ok(self.opts_dict['ip_range'])):
             print "Invalid action. Usage: --vmgadd --name _ --vmgid _  (name allowed characters: 0-9a-zA-Z_)"
             return False
         self.opts_dict['vm_group_id']=int(self.opts_dict['vm_group_id'])
@@ -189,8 +198,8 @@ class VMUserInterface:
     ############################################################################################## 
 
     def check_user_add(self):
-        print self.id_number_ok(self.opts_dict['user_id'],'>')
-        print self.path_ok(self.opts_dict['storage_dir'], 0)
+        #print self.id_number_ok(self.opts_dict['user_id'],'>')
+        #print self.path_ok(self.opts_dict['storage_dir'], 0)
         if(not self.name_ok(self.opts_dict['name']) or not self.id_number_ok(self.opts_dict['user_id'],'>')
            or not self.path_ok(self.opts_dict['storage_dir'], 0)):
             print "Invalid action. Usage: --uadd --name _ --uid _ --stordir _ [-ug _id1/name1,..  --maxrun _(def=2) --maxstor _(def=133G) ]"
@@ -263,9 +272,18 @@ class VMUserInterface:
                 return False
         # optional stuff 
         if(self.opts_dict['vm_group_s']):
-            if(not (self.id_number_ok(self.opts_dict['vm_group_s'],'<') or self.name_ok(self.opts_dict['vm_group_s']))):
+#            if(not (self.id_number_ok(self.opts_dict['vm_group_s'],'<') or self.name_ok(self.opts_dict['vm_group_s']))):
+#                print "Invalid VM group."
+#                return False
+            newl={}
+            if(self.id_number_ok(self.opts_dict['vm_group_s'],'<')):
+                newl['ids']=self.opts_dict['vm_group_s']
+            elif(self.name_ok(self.opts_dict['vm_group_s'])):
+                newl['names']=self.opts_dict['vm_group_s']
+            else:
                 print "Invalid VM group."
                 return False
+            self.opts_dict['vm_group_s']=newl
         if(self.opts_dict['desc']):
             if(not self.name_ok(self.opts_dict['desc'])):
                 print "Invalid description.(maximum lenght 50 characters, [a-zA-Z0-9_]+)"
@@ -293,8 +311,16 @@ class VMUserInterface:
         return True
     ##############################################################################################
     
+    #todo
     def check_permset(self):
-        #todo 
+        if(not (self.name_ok(self.opts_dict['user']) or self.id_number_ok(self.opts_dict['user'], '>') 
+                or self.name_ok(self.opts_dict['user_group_s']) or self.id_number_ok(self.opts_dict['user_group_s'], '>') )):
+            print "Invalid action. Usage: --permset [+m,-d,+r,-i](at least one) --user|--ug _id/name  --vm|--vmg _id/name "
+            return False
+        if(not (self.name_ok(self.opts_dict['vm']) or self.id_number_ok(self.opts_dict['vm'], '>')
+                or self.name_ok(self.opts_dict['vm_group_s']) or self.id_number_ok(self.opts_dict['vm_group_s'], '>') )):
+            print "Invalid action. Usage: --permset [+m,-d,+r,-i](at least one) --user|--ug _id/name  --vm|--vmg _id/name"
+            return False
         # self.opts_dict['use_discs'] is like "+m,-d,+r,-i"
         perm_err="invalid permissions: should be a list from +m,+d,+r,+i,-m,-d,-r,-i"
         permdict={}
@@ -313,10 +339,19 @@ class VMUserInterface:
             if(perm[1]=="m"): permdict['modify']=add_del
             elif(perm[1]=="d"): permdict['derive']=add_del
             elif(perm[1]=="r"): permdict['run']=add_del
-            elif(perm[1]=="1"): permdict['force_isolated']=add_del
+            elif(perm[1]=="i"): permdict['force_isolated']=add_del
             else: print perm_err
         self.opts_dict['permset']=permdict
-        print permdict
+        if(debug): print permdict
+        return True
+    
+    def check_mapdel(self):
+        if(not (self.name_ok(self.opts_dict['user']) or self.id_number_ok(self.opts_dict['user'], '>'))):
+            print "Invalid action. Usage: --mapdel --user _id/name --vm _id/name "
+            return False
+        if(not (self.name_ok(self.opts_dict['vm']) or self.id_number_ok(self.opts_dict['vm'], '>'))):
+            print "Invalid action. Usage: --mapdel --user _id/name --vm _id/name"
+            return False
         return True
     ##############################################################################################
     
@@ -353,6 +388,8 @@ class VMUserInterface:
             return self.check_vm_run()
         if(action=='permset'):
             return self.check_permset()
+        if(action=='mapdel'):
+            return self.check_mapdel()
         return True # False #todo!!
     ##############################################################################################
     
@@ -365,7 +402,7 @@ class VMUserInterface:
                 "vm_group_add vm_group_del vm_group_mod list_vm_groups "+\
                 "user_add user_del user_mod user_list "+\
                 "vm_add vm_del vm_mod vm_run vm_list "+\
-                "permset permlist maplist"
+                "permset permlist maplist mapdel"
         action_list=acts.split(' ')
         self.opts_dict=vars(self.opts) 
         #print opts_dict.keys()
@@ -379,17 +416,18 @@ class VMUserInterface:
         if(not self.validateArgs(action)):
             print "err: Validating action".format(action);exit(1)
         #print action
-        error=self.vmtools.execute(self.real_uid,action,self.opts_dict)
+        error=self.vmcontroller.execute(self.real_uid,action,self.opts_dict)
         if(error): print error
 
    
 ################################################################################# test area
     
 def main():
-#    if(os.getuid()!=0): print "err";exit(1)
-    real_uid=commands.getstatusoutput("echo $SUDO_USER | xargs -I name id -u name ")[1] 
-    vmtools=tools.VMTools(real_uid)
-    ui=VMUserInterface(vmtools,real_uid)
+##    if(os.getuid()!=0): print "err";exit(1)
+#    real_uid=commands.getstatusoutput("echo $SUDO_USER | xargs -I name id -u name ")[1] 
+    real_uid=os.getuid()
+    vmcontroller=controller.VMController(real_uid)
+    ui=VMUserInterface(vmcontroller,real_uid)
     ui.parseOpts()
     ui.extractCommand()
     

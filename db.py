@@ -2,12 +2,16 @@ import sqlite3
 import os
 import subprocess
 
+debug=1
+
 class DatabaseException:
     def __init__(self,err_string):
         self.err= err_string;
 
-defaultDb = "vm.db"
-defaultAdmin="503"
+defaultDb = "/export/home/acs/stud/i/iustina_camelia.melinte/vmt/vm.db" #"/root/vm.db"
+#defaultAdmin="503"
+default_ip_range="192.168.100.15-192.168.100.254"
+default_admin_uid=17003 #503
 
 class VMDatabase:
     _dbPath = ""
@@ -17,17 +21,13 @@ class VMDatabase:
         if(hasattr(self,'_conn')): self._conn.close()
         
     def init(self,db=defaultDb):  
-        # open db 
-        print "db ",db
         if(not os.path.exists(db)): 
             raise  DatabaseException("Database not found at {0}".format(db))
         self._dbPath = db
         self._conn = sqlite3.connect(self._dbPath)
         self._conn.row_factory = sqlite3.Row    # some useful sh.. I guess
-        # create the tables if this is the first time
       
     def firstInit(self,db=defaultDb):
-        print db  
         if(os.path.exists(db)): 
             raise  DatabaseException("Database already exists: {0}".format(db))
         if(subprocess.call("touch {0}".format(db),shell=True)): 
@@ -37,8 +37,8 @@ class VMDatabase:
 
     def insert(self,table,row):
         # suppose the details are ordered , # ! convention: name goes after id in any table
-        print "inserting in {0} {1}".format(table,row)
-        _noCols=dict(User=7,VM=12,Permission=6,UserGroup=3,VMGroup=2,Mapping=9) # !!todo update..dunno how right now
+        if(debug): print "inserting in {0} {1}".format(table,row)
+        _noCols=dict(User=7,VM=12,Permission=6,UserGroup=2,VMGroup=3,Mapping=9) # !!todo update..dunno how right now
         # vrfy duplicate id/name
         if(table=='Permission' or table=="Mapping"):
             cursor=self._conn.execute('select count(*) from {0} where user_g_id=? and vm_g_id=?'.format(table),(row[0],row[1],))
@@ -58,22 +58,22 @@ class VMDatabase:
             
             
     def _init_tables(self):
-        print "..creating tables"
+        if(debug): print "..creating tables"
         self._conn.execute('''CREATE TABLE User (id integer, name text, ip_range text, gid_list text,
             max_running_vm integer, max_storage integer,storage_folder text)''')
-        self._conn.execute('''CREATE TABLE VM (id integer, name text, owner_id integer, gid_list text, storage integer, 
+        self._conn.execute('''CREATE TABLE VM (id integer, name text, owner_id integer, vmgid text, storage integer, 
             derivable integer, base_id integer,mac text,ip text,vnc text,desc text,started integer)''')
         self._conn.execute('''CREATE TABLE Permission (user_g_id integer, vm_g_id integer, run integer, modify integer, 
             derive integer, force_isolated integer)''')
         self._conn.execute('''CREATE TABLE Mapping (user_g_id integer, vm_g_id integer, ip text, mac text, isolated integer,
             exechost text, vncport integer, tap text, date text)''')
-        self._conn.execute('''CREATE TABLE UserGroup (id integer, name text, ip_range text)''')
-        self._conn.execute('''CREATE TABLE VMGroup (id integer, name text)''')
+        self._conn.execute('''CREATE TABLE UserGroup (id integer, name text)''')
+        self._conn.execute('''CREATE TABLE VMGroup (id integer, name text, ip_range text)''')
         self._conn.commit()
-        self.insert("UserGroup",(0,"admin","10.42.0.0/24"))
-        self.insert("UserGroup",(1,"all_users","10.42.0.0/16"))
-        self.insert("VMGroup",(1,"all_vms"))
-        self.insert("User",(503,'admin1','','(0,)',1000,1000,'/home/me'))
+        self.insert("UserGroup",(0,"admin"))
+        self.insert("UserGroup",(1,"all_users"))
+        self.insert("VMGroup",(1,"all_vms",default_ip_range))
+        self.insert("User",(default_admin_uid,'admin1','','(0,)',1000,133000,'/home/me'))
         self._conn.commit()
     
             
@@ -91,7 +91,7 @@ class VMDatabase:
             else:
                 sets+="{0} = {1},".format(key,mappings[key])
         sets=sets[:-1]
-        print 'update {0} set {1} where id = {2}'.format(table,sets,item_id)
+        if(debug): print 'update {0} set {1} where id = {2}'.format(table,sets,item_id)
         self._conn.execute('update {0} set {1} where id = ?'.format(table,sets),(item_id,))
         self._conn.commit()
     
@@ -109,7 +109,7 @@ class VMDatabase:
             else:
                 sets+="{0} = {1},".format(key,mappings[key])
         sets=sets[:-1]
-        print 'update {0} set {1} where  user_g_id = {2} and vm_g_id = {3}'.format(table,sets,user_g_id,vm_g_id)
+        if(debug): print 'update {0} set {1} where  user_g_id = {2} and vm_g_id = {3}'.format(table,sets,user_g_id,vm_g_id)
         self._conn.execute('update {0} set {1} where  user_g_id = ? and vm_g_id = ?'.format(table,sets),(user_g_id,vm_g_id,))
         self._conn.commit()
         
@@ -166,7 +166,7 @@ class VMDatabase:
                 stmt+="{0} = ? {1} ".format(key,and_or)
             stmt=stmt[:-and_or_length]
         
-        print stmt,tuple(col_dict.values())
+        if(debug): print stmt,tuple(col_dict.values())
         self._conn.execute(stmt,tuple(col_dict.values()));
         self._conn.commit()
     
@@ -221,8 +221,8 @@ class VMDatabase:
 ################################################################################# test area
 
 def try_insert(db):
-    db.insert("UserGroup",(2,"ug2","giprange"))
-    db.insert("VMGroup",(2,"vmg2"))
+    db.insert("UserGroup",(2,"ug2"))
+    db.insert("VMGroup",(2,"vmg2",''))
     #User (id, name, ip_range, gid_list,max_running_vm, max_storage,storage_folder)
     db.insert("User",(2,"username","iprange","(0,1)",3,10,"storage_folder"))
     #VM (id, name, owner_id, gid_list, storage,derivable, base_uuid,mac,ip,vnc,desc,started)

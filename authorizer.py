@@ -51,11 +51,12 @@ class Authorizer():
                         return True                  
         except db.DatabaseException as e:  
             print e.err
+            exit(1)
         return False
         
-    def isOk(self,action,items_dict,db):
-        self.db=db
-        print "Authorizer: verifying ",action," ",items_dict
+    def isOk(self,action,items_dict,_db):
+        self.db=_db
+        if(db.debug): print "Authorizer: verifying ",action," ",items_dict
         self.items_dict=items_dict
         if(action=="isadmin"):
             return self.isAdmin()

@@ -1,17 +1,22 @@
-import pypureomapi
+#!/usr/bin/python
+#import pypureomapi
 import commands
+import ast
 import datetime
 import subprocess
 import os
 import time
-import db
+import sys
+from optparse import OptionParser
+
+#import db
 
 br_name="vbr0" # are 192.168.100.1
 
-dhcp_keyname = "omapi_key"
-dhcp_secret = "KaekLmmyUj2RLvC8c1lj15AJ3gOIScUo/PjabCirckCw1lxSAj0hyIEASRaptg3gk33XHUrglPzQK1len7LhMQ=="
-dhcp_server = "127.0.0.1"
-dhcp_port = 9991
+#dhcp_keyname = "omapi_key"
+#dhcp_secret = "KaekLmmyUj2RLvC8c1lj15AJ3gOIScUo/PjabCirckCw1lxSAj0hyIEASRaptg3gk33XHUrglPzQK1len7LhMQ=="
+#dhcp_server = "127.0.0.1"
+#dhcp_port = 9991
 
 
 
@@ -21,24 +26,32 @@ class VMStarter:
     # --vmrun --vm _id/name [--mem _ --smp _ --install --cdrom _ --isolate] 
     # hd is a list of paths (hda->hdd)
     
-    def getParamsForKVM(self,real_uid,vm_id,discs,mem,smp,install,cdrom,isolate):
+    def getHostParams(self,params):
         # db
-        self._initDB()
-        disc_paths=discs.keys() 
-        disc_paths.sort()       #put them in order : _0.qcow2,_1.qcow2 etc
-        ip=self.genFreeIP(real_uid)
-        mac=self.genMACfromIP(ip)
-        exechost=self.getExechost()
-        vncport=self.genVNCport()
-        tapname=self.genTap()
+#        self._initDB()
+
+#        disc_paths=discs.keys() 
+#        disc_paths.sort()       #put them in order : _0.qcow2,_1.qcow2 etc
+#        ip=self.genFreeIP(real_uid)
+#        mac=self.genMACfromIP(ip)
         
-        self.addDHCPMapping(real_uid,vm_id,ip,mac,isolate,exechost,vncport,tapname)
-        self.connectToNetwork(tapname)
-        if(isolate): 
-            self.isolateVM(ip,mac,tapname) # mac spoof, inter vm traffic
-        self.startVM(disc_paths,smp,mem,ip,mac,exechost,vncport,tapname,install,cdrom)
+        params['exechost']=self.getExechost()
+        params['vncport']=11
+        params['tapname']='tapxx'
+#        params['exechost']=self.getExechost()
+#        params['vncport']=self.genVNCport()
+#        params['tapname']=self.genTap()
+        
+#        self.addDHCPMapping(real_uid,vm_id,ip,mac,isolate,exechost,vncport,tapname)
+#        self.connectToNetwork(tapname)
+#        if(isolate): 
+#            self.isolateVM(ip,mac,tapname) # mac spoof, inter vm traffic
+#        self.startVM(disc_paths,smp,mem,ip,mac,exechost,vncport,tapname,install,cdrom)
     
-    def startVM(self,disc_paths,smp,mem,ip,mac,exechost,vncport,tapname,install,cdrom):
+    def startVM(self,disc_paths,smp,mem,ip,mac,exechost,vncport,tapname,install,cdrom,isolate):
+        self.connectToNetwork(tapname)
+#        if(isolate): 
+#            self.isolateVM(ip,mac,tapname) # mac spoof, inter vm traffic
         # create command
         optional_install=""
         if(cdrom): optional_install=" -boot d -cdrom {0} ".format(cdrom)
@@ -49,8 +62,9 @@ class VMStarter:
         if(len(disc_paths)>=4): hdds+=" -hdd {0} ".format(disc_paths[3])
         
         #/usr/libexec/qemu-kvm [ -boot d -cdrom ..iso ] -hda vm1.qcow2 -vnc :10 -m 1G -smp 1 -net nic,macaddr=DE:AD:BE:EF:CF:87 -net tap,ifname=tap0,script=no,downscript=no &
-        cmd="/usr/libexec/qemu-kvm {0} -vnc :{1} -m {2} -smp {3} -net nic,macaddr={4} -net tap,ifname={5},script=no,downscript=no \
-        {6}  &".format(hdds,vncport%100,mem,smp,mac,tapname,optional_install)
+#        cmd="/usr/libexec/qemu-kvm {0} -vnc :{1} -m {2} -smp {3} -net nic,macaddr={4} -net tap,ifname={5},script=no,downscript=no \
+#        {6}  &".format(hdds,vncport%100,mem,smp,mac,tapname,optional_install)
+        cmd="/usr/libexec/qemu-kvm {0} -vnc :{1} -m {2} -smp {3}".format(hdds,11,'1G',1)
         print cmd
         if(subprocess.call(cmd,shell=True)): print "err";exit(1)
         # todo check if vm is actually running
@@ -59,92 +73,37 @@ class VMStarter:
         #fork to watch this process 
         child_pid = os.fork()
         if child_pid == 0:
+#            print "redirect ",redirect_file
+#            if(redirect_file): 
+#                sys.stdout = open(redirect_file, 'w')
             print "Child Process: PID# %s" % os.getpid()
             vm_running=1
             while(vm_running):
                 time.sleep(1)
+                # todo prin smth in out to let the controller know if vm is still running
                 if(not commands.getstatusoutput("ps aux |grep {0} |grep -v grep ".format(disc_paths[0]))[1]):
                     print "vm process died"
                     vm_running=0
-                    self.removeDHCPMapping(ip,mac)
-                    self.removeTap(tapname)
-                    self.alterEbtables("D",ip,mac,tapname)
+#                    self.removeTap(tapname)
+#                    self.alterEbtables("D",ip,mac,tapname)
                 
+        elif child_pid == -1:
+            print "err fork"
         else:
             print "Parent terminating: PID# %s" % os.getpid()
     
-    def _initDB(self):
-        try:
-            self.db=db.VMDatabase()
-            self.db.init(db.defaultDb)
-        except db.DatabaseException as e:  
-            print e.err 
-    
-    def getDiscPaths(self,vm_id):
-        discs=[]
+#    def _initDB(self):
+#        try:
+#            self.db=db.VMDatabase()
+#            self.db.init(db.defaultDb)
+#        except db.DatabaseException as e:  
+#            print e.err 
 
-        return discs
-    
-    def genFreeIP(self,real_uid):
-        # subnet for uid/gids , usedIPs from mappings #  or ask dhcp, maybe look in leases. #todo
-        try:
-            #todo change , ; for now, use the range 192.168.100.0/24
-            #rows=self.db.getRowsWithCriteria('UserGroup','*','and',{'id':1})
-            #ip_range=rows[0]['ip_range']  #10.42.0.0/16
-            # find used IPs (mappings) from this range #todo; for now, use 192.168.100
-            rows=self.db.getRowsWithCriteria('Mapping','ip', '', {})
-            print rows
-            #todo ..this is just for /24 and 192.168.100.0; use some conversion for the host bits, a number(for using the range)
-            # this may be slow..if too many mappings exist
-            first_host_digits=15 
-            list=range(first_host_digits,255)
-            for row in rows:
-                for ip in row: #only one
-                    used_host_no=commands.getstatusoutput("cut -d'.' -f4 <<<{0}".format(ip))[1]  #host digits
-                    if int(used_host_no) in list: 
-                        list.remove(int(used_host_no))
-            return "192.168.100."+str(min(list))
-        except db.DatabaseException as e:  
-            print e.err 
-        pass
-    
-    def genMACfromIP(self,ip):
-        # okidoki..now..what, convert last 16 bits to hex :D        
-        ip_part3=ip.split('.')[2]
-        ip_part4=ip.split('.')[3]
-        mac_part5=hex(int(ip_part3)).split('x')[1]  
-        mac_part6=hex(int(ip_part4)).split('x')[1]  
-        if(len(mac_part5)==1): mac_part5="0"+mac_part5
-        if(len(mac_part6)==1): mac_part6="0"+mac_part6
-        mac="de:af:de:af:{0}:{1}".format(mac_part5,mac_part6)
-        return mac
     
     def getExechost(self):
         return commands.getstatusoutput("hostname")[1]
     
-    #unused exechost
-    def addDHCPMapping(self,real_uid,vm_id,ip,mac,isolate,exechost,vncport,tapname):
-        #instruct dchp
-        try:
-            oma = pypureomapi.Omapi(dhcp_server, dhcp_port, dhcp_keyname, dhcp_secret, debug=False)
-            oma.add_host(ip,mac)
-        except pypureomapi.OmapiError as err:
-            print "OMAPI error: {0}".format(err)
-        #insert in db
-        # Mapping (user_g_id integer, vm_g_id integer, ip text, mac text, isolated integer,exechost text, vncport integer, date text)
-        date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:S")
-        try:
-            row=(real_uid,vm_id,ip,mac,isolate,exechost,vncport,tapname,date)
-            print row
-            self.db.insert('Mapping', row)
-        except db.DatabaseException as e:  
-            print e.err
-    
-    def removeDHCPMapping(self,ip,mac):
-        try:
-            self.db.deleteRowsWithCriteria('Mapping', 'and',{'ip':ip,'mac':mac})
-        except db.DatabaseException as e:  
-            print e.err
+
     
     def genVNCport(self):
         ls=range(5901,5999) #todo ce porturi poate avea vnc
@@ -190,4 +149,39 @@ class VMStarter:
         if(subprocess.call("ebtables -{0} FORWARD -i tap+ -o {1} -j DROP".format(action,tapname),shell=True)): print "err"; exit(1)
         # save
         if(subprocess.call("service ebtables save",shell=True)): print "err"; exit(1)
+        
+        
+################################################################################# test area
+
+def get_opts():
+    parser=OptionParser()
+    parser.add_option("--vmid",dest="vmid",help="",default="") #todo do not use, now use for output filename
+    parser.add_option("--discs",dest="discs",help="")  # ['path1','path2',..]
+    parser.add_option("--ip",dest="ip",help="")
+    parser.add_option("--mac",dest="mac",help="")
+    parser.add_option("--smp",dest="smp",help="# processors, default 1",default=1)
+    parser.add_option("--mem",dest="mem",help="memory in megabytes (eg '512' or '512M','1G'), default 512",default="1G")
+    parser.add_option("--isolate",dest="isolate",action='store_true',help="Isolates vm from the others",default=False)
+    parser.add_option("--install",dest="install",action='store_true',help="if specified, the vm will boot from the cdrom (which must be specified also)",default=False)
+    parser.add_option("--cdrom",dest="cdrom",help="specify .iso installation file")
+    (opts,args)=parser.parse_args()
+    return opts
+    
+if __name__=="__main__":
+    vms=VMStarter()
+    args=vars(get_opts())
+    
+    if(args['vmid']):
+        sys.stdout = open(args['vmid'], 'w')
+    
+    params={'exechost':"",'vncport':"",'tapname':""}
+    vms.getHostParams(params)
+    print "exechost=",params['exechost']
+    print "vncport=",params['vncport']
+    print "tapname=",params['tapname']
+    
+    discs=args['discs'].split(",")
+    vms.startVM(discs, args['smp'], args['mem'], args['ip'], args['mac'], params['exechost'],params['vncport'],params['tapname'],
+                 args['install'], args['cdrom'], args['isolate']) #to send out filename to kid process (only used if started without qsub)
+    
     
