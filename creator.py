@@ -6,6 +6,7 @@ import subprocess
 import sys
 import db
 
+debug=1
 dhcp_keyname = "omapi_key"
 dhcp_secret = "KaekLmmyUj2RLvC8c1lj15AJ3gOIScUo/PjabCirckCw1lxSAj0hyIEASRaptg3gk33XHUrglPzQK1len7LhMQ=="
 dhcp_server = "127.0.0.1"
@@ -69,24 +70,32 @@ class VMCreator:
             i=0
             for base_path in base_storage:
                 mpath=path+"_{0}.qcow2".format(i)
-                cmd="cp {0} {1} >/dev/null 2>&1 &".format(base_path,mpath)
-                if(db.debug): print cmd
+                if(os.path.exists(mpath) and os.path.samefile(base_path,mpath)):
+                    if(db.debug): print "same file: ",base_path,mpath
+                else:
+                    cmd="cp {0} {1} >/dev/null 2>&1 ".format(base_path,mpath)
+                    if(db.debug): print cmd
+                    if(subprocess.call(cmd,shell=True)): print "err"; exit(1)
                 i+=1
-                if(subprocess.call(cmd,shell=True)): print "err"; exit(1)
                 if(db.debug): print "checking size"
                 if(not os.path.isfile(mpath)): print "err: created file is not there..funny"; exit(1)
-                new_storage[mpath]=int(commands.getstatusoutput('qemu-img info {0} |grep virtual |cut -d"(" -f2 |cut -d" " -f1'.format(base_path))[1][:-6])
+                new_storage[mpath]=int(commands.getstatusoutput('qemu-img info {0} |grep virtual |cut -d"(" -f2 |cut -d" " -f1'.format(mpath))[1][:-6])
         elif(action=='rename'):
-            # keep paths,but rename files
+            #  renames, keeps paths
             i=0
             for base_path in base_storage:
-                mpath=path+"_{0}.qcow2".format(i)
-                cmd="mv {0} {1} >/dev/null 2>&1 ".format(base_path,mpath)
-                if(db.debug): print cmd
+                #path= os.path.abspath("_".join(base_path.split('_')[:-1]))
+                mpath=os.path.abspath(base_path+"_{0}.qcow2".format(i))
+                if(debug): print "renaming ",base_path,mpath
+                if(os.path.exists(mpath) and os.path.samefile(base_path,mpath)):
+                    if(debug): print "same file: ",base_path,mpath
+                else:
+                    cmd="mv {0} {1} ".format(base_path,mpath)
+                    if(debug): print cmd
+                    if(subprocess.call(cmd,shell=True)): print "err: movin file"; exit(1)
                 i+=1
                 if(not os.path.isfile(mpath)): print "err: created file is not there..funny"; exit(1)
-                new_storage[mpath]=int(commands.getstatusoutput('qemu-img info {0} |grep virtual |cut -d"(" -f2 |cut -d" " -f1'.format(base_path))[1][:-6])
-                if(subprocess.call(cmd,shell=True)): print "err"; exit(1)
+                new_storage[mpath]=int(commands.getstatusoutput('qemu-img info {0} |grep virtual |cut -d"(" -f2 |cut -d" " -f1'.format(mpath))[1][:-6])
         
         return new_storage
     

@@ -55,7 +55,7 @@ class VMUserInterface:
         self.parser.add_option("--vmdel",dest="vm_del",action='store_true',help="delete vm ",default=False)
         self.parser.add_option("--vmmod",dest="vm_mod",action='store_true',help="modify vm ",default=False)
         self.parser.add_option("--vmrun",dest="vm_run",action='store_true',help="modify vm ",default=False)
-        self.parser.add_option("--usediscs",dest="use_discs",help="eg. '/path/file1.qcow1,/path/file2.qcow1 (first is used to boot)")
+        self.parser.add_option("--usediscs",dest="use_discs",help="list of paths separated by , (first is used to boot)")
         self.parser.add_option("--stor",dest="storage",help="eg. '5G,500M (creates 2 discs), '3G' (one disc) or wtv.")
         self.parser.add_option("--smp",dest="smp",help="# processors, default 1",default=1)
         self.parser.add_option("--mem",dest="mem",help="memory in megabytes (eg '512' or '512M','1G'), default 512",default="1G")
@@ -131,10 +131,13 @@ class VMUserInterface:
     
     def path_ok(self,path,is_qcow):
         if(not path or not os.path.exists(path)):
+            "Invalid path: missing/does not exist"
             return False
-        if(is_qcow):
-            if(not commands.getstatusoutput("file {0} |grep 'Qemu Image,'".format(path))[1]):
-                return False
+        # returns "data" for new images. leave this for now
+#        if(is_qcow):
+#            if(not commands.getstatusoutput("file {0} |grep 'Qemu Image,'".format(path))[1]):
+#                print "Invalid path: not a qemu image"
+#                return False
         return True
     
     def ip_range_ok(self,iprange):
@@ -252,6 +255,9 @@ class VMUserInterface:
             for path in paths:
                 if(self.path_ok(path,1)):
                     self.opts_dict['use_discs'].append(path)
+                else:
+                    print "Invalid path in --usediscs"
+                    return False
         if(self.opts_dict['storage']): # validate storage format numberM|G , convert to list and into M
             if(one): print "Please specify only one of these: --base --stor --usediscs"
             else: one=1

@@ -9,47 +9,25 @@ import time
 import sys
 from optparse import OptionParser
 
-#import db
 
 br_name="vbr0" # are 192.168.100.1
-
-#dhcp_keyname = "omapi_key"
-#dhcp_secret = "KaekLmmyUj2RLvC8c1lj15AJ3gOIScUo/PjabCirckCw1lxSAj0hyIEASRaptg3gk33XHUrglPzQK1len7LhMQ=="
-#dhcp_server = "127.0.0.1"
-#dhcp_port = 9991
-
 
 
 class VMStarter:
     def __init__(self):pass
         
     # --vmrun --vm _id/name [--mem _ --smp _ --install --cdrom _ --isolate] 
-    # hd is a list of paths (hda->hdd)
-    
-    def getHostParams(self,params):
-        # db
-#        self._initDB()
-
-#        disc_paths=discs.keys() 
-#        disc_paths.sort()       #put them in order : _0.qcow2,_1.qcow2 etc
-#        ip=self.genFreeIP(real_uid)
-#        mac=self.genMACfromIP(ip)
-        
+    def getHostParams(self,params):        
         params['exechost']=self.getExechost()
-        params['vncport']=11
+        params['vncport']=self.genVNCport()
         params['tapname']='tapxx'
 #        params['exechost']=self.getExechost()
 #        params['vncport']=self.genVNCport()
 #        params['tapname']=self.genTap()
         
-#        self.addDHCPMapping(real_uid,vm_id,ip,mac,isolate,exechost,vncport,tapname)
-#        self.connectToNetwork(tapname)
-#        if(isolate): 
-#            self.isolateVM(ip,mac,tapname) # mac spoof, inter vm traffic
-#        self.startVM(disc_paths,smp,mem,ip,mac,exechost,vncport,tapname,install,cdrom)
     
     def startVM(self,disc_paths,smp,mem,ip,mac,exechost,vncport,tapname,install,cdrom,isolate):
-        self.connectToNetwork(tapname)
+#        self.connectToNetwork(tapname)
 #        if(isolate): 
 #            self.isolateVM(ip,mac,tapname) # mac spoof, inter vm traffic
         # create command
@@ -64,46 +42,29 @@ class VMStarter:
         #/usr/libexec/qemu-kvm [ -boot d -cdrom ..iso ] -hda vm1.qcow2 -vnc :10 -m 1G -smp 1 -net nic,macaddr=DE:AD:BE:EF:CF:87 -net tap,ifname=tap0,script=no,downscript=no &
 #        cmd="/usr/libexec/qemu-kvm {0} -vnc :{1} -m {2} -smp {3} -net nic,macaddr={4} -net tap,ifname={5},script=no,downscript=no \
 #        {6}  &".format(hdds,vncport%100,mem,smp,mac,tapname,optional_install)
-        cmd="/usr/libexec/qemu-kvm {0} -vnc :{1} -m {2} -smp {3}".format(hdds,11,'1G',1)
+        cmd="/usr/libexec/qemu-kvm {0} -vnc :{1} -m {2} -smp {3}".format(hdds,vncport%100,'1G',1)
         print cmd
-        if(subprocess.call(cmd,shell=True)): print "err";exit(1)
-        # todo check if vm is actually running
-        print "Your vm is accessible via host {0} vnc port {1}, display {2}".format(exechost,vncport,vncport%100)
         
-        #fork to watch this process 
         child_pid = os.fork()
-        if child_pid == 0:
-#            print "redirect ",redirect_file
-#            if(redirect_file): 
-#                sys.stdout = open(redirect_file, 'w')
-            print "Child Process: PID# %s" % os.getpid()
+        if child_pid == 0:      
+            #if(subprocess.call(cmd,shell=True)): print "error calling kvm";exit(1)
+            if(commands.getstatusoutput(cmd)[0]): print "error calling kvm";exit(1)
+        else:
+            print "Your vm is accessible via host {0} vnc port {1}, display {2}".format(exechost,vncport,vncport%100)
             vm_running=1
             while(vm_running):
-                time.sleep(1)
+                time.sleep(2)
                 # todo prin smth in out to let the controller know if vm is still running
+                sys.stdout.write("k")
                 if(not commands.getstatusoutput("ps aux |grep {0} |grep -v grep ".format(disc_paths[0]))[1]):
                     print "vm process died"
                     vm_running=0
 #                    self.removeTap(tapname)
 #                    self.alterEbtables("D",ip,mac,tapname)
-                
-        elif child_pid == -1:
-            print "err fork"
-        else:
-            print "Parent terminating: PID# %s" % os.getpid()
-    
-#    def _initDB(self):
-#        try:
-#            self.db=db.VMDatabase()
-#            self.db.init(db.defaultDb)
-#        except db.DatabaseException as e:  
-#            print e.err 
-
+        
     
     def getExechost(self):
         return commands.getstatusoutput("hostname")[1]
-    
-
     
     def genVNCport(self):
         ls=range(5901,5999) #todo ce porturi poate avea vnc
@@ -142,9 +103,6 @@ class VMStarter:
         # ip spoofing
         if(subprocess.call("ebtables -{0} FORWARD -p IPv4 --ip-src ! {1} -s  {2} -j DROP".format(action,ip,mac),shell=True)): print "err"; exit(1)
         if(subprocess.call("ebtables -{0} FORWARD -p IPv4 --ip-src {1} -s ! {2} -j DROP".format(action,ip,mac),shell=True)): print "err"; exit(1)
-        #..hai sa lasam dhcpul.. 
-        #if(subprocess.call("ebtables -A INPUT -p IPv4 --ip-src ! {0} -s {1} -j DROP".format(ip,mac),shell=True)): print "err"; exit(1)
-        #if(subprocess.call("ebtables -A INPUT -p IPv4 --ip-src {0} -s ! {1} -j DROP".format(ip,mac),shell=True)): print "err"; exit(1)
         # inter-vm IP traffic
         if(subprocess.call("ebtables -{0} FORWARD -i tap+ -o {1} -j DROP".format(action,tapname),shell=True)): print "err"; exit(1)
         # save
@@ -183,5 +141,4 @@ if __name__=="__main__":
     discs=args['discs'].split(",")
     vms.startVM(discs, args['smp'], args['mem'], args['ip'], args['mac'], params['exechost'],params['vncport'],params['tapname'],
                  args['install'], args['cdrom'], args['isolate']) #to send out filename to kid process (only used if started without qsub)
-    
     

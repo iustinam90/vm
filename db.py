@@ -8,7 +8,8 @@ class DatabaseException:
     def __init__(self,err_string):
         self.err= err_string;
 
-defaultDb = "/export/home/acs/stud/i/iustina_camelia.melinte/vmt/vm.db" #"/root/vm.db"
+default_admin_home="/export/home/acs/stud/i/iustina_camelia.melinte/vmt"
+defaultDb = "/tmp/vm1.db" #"/root/vm.db"
 #defaultAdmin="503"
 default_ip_range="192.168.100.15-192.168.100.254"
 default_admin_uid=17003 #503
@@ -73,7 +74,7 @@ class VMDatabase:
         self.insert("UserGroup",(0,"admin"))
         self.insert("UserGroup",(1,"all_users"))
         self.insert("VMGroup",(1,"all_vms",default_ip_range))
-        self.insert("User",(default_admin_uid,'admin1','','(0,)',1000,133000,'/home/me'))
+        self.insert("User",(default_admin_uid,'admin1','','(0,)',1000,133000,default_admin_home))
         self._conn.commit()
     
             

@@ -1,9 +1,12 @@
 from optparse import OptionParser
 import time
+import sys
+import os
 import commands
 import creator
 import db
 
+debug=1
 # loop: get vnc, host and tap, insert mapping
 # loop: looks in process outp file for the message "died" and deletes mapping
 # deletes mapping (ip,mac) 
@@ -23,33 +26,35 @@ class VMWatcher:
     def watchHostParams(self,file,params):
         mustbe3=0
         while(mustbe3!=3):
-            # todo check if file was modified recently
+            # todo check if file was created ; wait for a while 
             time.sleep(1)
-            exechost=commands.getstatusoutput("grep exechost {0} |grep -v grep ".format(file))[1]
-            vncport=commands.getstatusoutput("grep vncport {0} |grep -v grep ".format(file))[1]
-            tapname=commands.getstatusoutput("grep tapname {0} |grep -v grep ".format(file))[1]
-            if(exechost):
+            err1,exechost=commands.getstatusoutput("grep exechost {0} |grep -v grep ".format(file))
+            err2,vncport=commands.getstatusoutput("grep vncport {0} |grep -v grep ".format(file))
+            err3,tapname=commands.getstatusoutput("grep tapname {0} |grep -v grep ".format(file))
+            if(exechost and not err1):
+                print exechost
                 params['exechost']=exechost.split('=')[1]
                 mustbe3+=1
-            if(tapname):
+            if(tapname and not err1):
+                print tapname
                 params['tapname']=tapname.split('=')[1]
                 mustbe3+=1
-            if(vncport):
+            if(vncport and not err1):
+                print vncport
                 params['vncport']=vncport.split('=')[1]
                 mustbe3+=1
             
     def watchVMdies(self,file):
         vm_running=1
-        max=5
-        while(max):
+        while(vm_running):
             time.sleep(1)
-            if(db.debug): print "watcher:waiting"
-            max-=1
-            # todo check if file was modified recently 
-#            if(commands.getstatusoutput("grep died {0} |grep -v grep ".format(file+"a"))[1]):
-#                print "watcher: vm process died"
-#                vm_running=0
-            
+            if(debug): sys.stdout.write("w")
+            #check if file was modified recently 
+            if(time.time()-os.path.getmtime(file)>5):
+                print "died: ",file
+                os.unlink(file)
+                vm_running=0
+
                 
 ################################################################################# test area
 
@@ -72,7 +77,7 @@ if __name__ == "__main__":
     vmw.vmc.db=vmw.db #give the initialized db ref to creator.
     params={'exechost':"",'vncport':"",'tapname':""}
     vmw.watchHostParams(args['file'],params) #wait for host params (tap,vnc,hostname) #todo file
-    if(db.debug): print params
+    if(debug): print "watcher",params
 #    vmw.vmc.addDHCPMapping(args['uid'],args['vmid'],args['ip'],args['mac'],args['isolate'],params['exechost'],params['vncport'],params['tapname'])
     vmw.watchVMdies(args['file']) #todo file
 #    vmw.vmc.removeDHCPMapping(args['ip'],args['mac'])

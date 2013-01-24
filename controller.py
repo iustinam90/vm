@@ -8,6 +8,7 @@ import creator
 import starter
 #too.. to parse it twice
 
+debug=1
 id_range_limit=500
 
 
@@ -329,14 +330,19 @@ class VMController:
         discs_basename=str(self.real_uid)+"_"+args['name']
 
         if(args['derivable'] and not args['use_discs']):
+            print "call create template"
             storage=vmc.createDiscs("", discs_basename, base_disc_location,args['storage'],'create')
         elif(args['base']):
+            print "call clone"
             storage=vmc.createDiscs(base_storage, discs_basename, storage_folder,{},'clone')
         elif(args['derivable'] and args['use_discs']):
-            storage=vmc.createDiscs(args['use_discs'], discs_basename, base_disc_location,{},'copy')
+            print "call copy"
+            storage=vmc.createDiscs(args['use_discs'], discs_basename, base_disc_location,{},'copy') #copy to templates dir
         elif(not args['derivable'] and args['use_discs']):
-            storage=vmc.createDiscs(args['use_discs'], discs_basename, storage_folder,{},'rename')
+            print "call rename"
+            storage=vmc.createDiscs(args['use_discs'], discs_basename, storage_folder,{},'rename') #
         else:
+            print "call create"
             storage=vmc.createDiscs("", discs_basename, storage_folder,args['storage'],'create')
         
         #uuid=vmc.genUUID()
@@ -344,12 +350,13 @@ class VMController:
 
         # insert in db
         # todo
-        vmgid=1 # default add to group all_vms
-        if(args['vm_group_s']):
-            if(args['vm_group_s']['ids']):
-                vmgid=args['vm_group_s']['ids']
-            elif(args['vm_group_s']['names']):
-                vmgid=args['vm_group_s']['names']
+        if(not args['base']): # if it has --base, then inhert the group, else insert in the default vmgroup
+            vmgid=1 # default add to group all_vms
+            if(args['vm_group_s']):
+                if(args['vm_group_s']['ids']):
+                    vmgid=args['vm_group_s']['ids']
+                elif(args['vm_group_s']['names']):
+                    vmgid=args['vm_group_s']['names']
         
         # VM (id, name, owner_id, vmgid, storage,derivable, base_uuid,mac,ip,vnc,desc,started)
         try:
@@ -416,10 +423,12 @@ class VMController:
         if(not os.path.isdir(vmoutdir)):  #todo configurable,move in init
             print "vmout dir not here"
             exit(1)
-        vmoutfile=os.path.join(vmoutdir+str(vm_id)) 
+        vmoutfile=os.path.join(vmoutdir,str(vm_id)) 
         
-        cmd="python starter.py --discs {0} --smp {1} --mem {2} --ip {3} --mac {4} --vmid {5} ".format(','.join(disc_paths),
-                                                                                                     args['smp'],args['mem'],ip,mac,vmoutfile)
+        #used for runing as a process , with --vmid
+        #cmd="python starter.py --discs {0} --smp {1} --mem {2} --ip {3} --mac {4} --vmid {5} ".format(','.join(disc_paths),args['smp'],args['mem'],ip,mac,vmoutfile)
+        
+        cmd="python -u starter.py --discs {0} --smp {1} --mem {2} --ip {3} --mac {4}".format(','.join(disc_paths),args['smp'],args['mem'],ip,mac)
         cmd_watcher="python watcher.py --uid {0} --vmid {1} --ip {2} --mac {3} --file {4} ".format(self.real_uid,vm_id,ip,mac,vmoutfile)
         
         if(args['isolate']):
@@ -430,12 +439,21 @@ class VMController:
             
         cmd_watcher+=" &"
         
-        cmd_job="echo '{0}' |qsub -S /usr/bin/python -o {1} ".format(cmd,vmoutfile)
+        #cmd_job="echo '{0}' |qsub -S /usr/bin/python -o {1} ".format(cmd,vmoutfile)
+        job_file=vmoutfile+".sh"
+        job_kvm="#!bin/bash \n {0} \n".format(cmd)
+        job_cmd="qsub -N kvm{0} -o {1} -cwd -l h=quad-wn05 {2}".format(vm_id,vmoutfile,job_file)
+        m=open(job_file,"w")
+        m.write(job_kvm)
+        m.close()
+        if(debug): print "job_file",job_file,job_kvm,"\n",job_cmd,"\n",cmd_watcher
         #as a process
         #if(subprocess.call(cmd,shell=True)): print "err: calling starter"; exit(1)
         #as a job
-        if(subprocess.call(cmd_job,shell=True)): print "err: calling starter job"; exit(1)
-        
+        #if(subprocess.call(cmd_job,shell=True)): print "err: calling starter job"; exit(1)
+        #as a job with command in file
+        if(subprocess.call(job_cmd,shell=True)): print "err: calling starter job"; exit(1)
+
         if(subprocess.call(cmd_watcher,shell=True)): print "err: calling watcher"; exit(1)
         #todo
         #vmc.addDHCPMapping(self.real_uid,vm_id,ip,mac,args['isolate'],params['exechost'],params['vncport'],params['tapname'])
