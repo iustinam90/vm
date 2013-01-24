@@ -1,3 +1,4 @@
+
 --init --dbpath //face baza de date
 
 --ugadd --name _ --ugid _ 
@@ -6,24 +7,25 @@
 --uglist
 
 --vmgadd --name _ --vmgid _ //todo[--iprange _]
---vmgdel --vmg _id/name
+--vmgdel --vmg _id/name,..
 --vmgmod --vmg _id/name [--name _ ] //todo --iprange _ //cannot ch vmgid
 --vmglist
 
---uadd --name _ --uid _ [-ug _id1/name1,..  --maxrun _(def=2) --maxstor _(def=10G) ] --stordir _ //todo scoate [--iprange _] 
+--uadd --name _ --uid _ --stordir _ [-ug _id1/name1,..  --maxrun _(def=2) --maxstor _(def=133G) ]  //todo scoate [--iprange _] 
 --umod --user _id/name [--name _ --ug +|-_,_ --maxrun _ --maxstor _ --stordir _ ]
---udel --user _id/name
---ulist [--ug _,_ --str _ --vm _ ]
+--udel --user _id/name,..
+--ulist [--ug _,_ --str _ --vm _ ] //todo
 
---vmadd --name _ [--uuid _ --vmg _id1/name1,..] --stor 1G,500M | --base _uuid/name | --usediscs path1,path2.. [--mem 2G --smp 1  --desc _ --derivable ] 
+--vmadd --name _ [ --vmg _id1/name (!unul) --desc _ --derivable] --stor 1G,500M | --base _id/name | --usediscs path1,path2.. //[ --uuid _ --mem 2G --smp 1   ] 
 --vmdel --vm _id/name
---vmrun --vm _id/name [--mem _ --smp _ --install --cdrom _ --isolate] //install nu mere fara cdrom sau daca nu vm nu a fost creat ca derivable.
+--vmrun --vm _id/name [--mem _ --smp _ --install --cdrom _ --isolate] 
 --vmmod --vm _id/name [--name _ --uuid _ --owner _ --derivable --noderivable] //nu putem modif stor/base_uuid]
 --vmlist [--owner _ --vmg _,_ --perm [d,m,r,i] --user _] [--running]
 
---permset [+m,-d,+r,-i](macar una) --user|--ug _id/name,..  --vm|--vmg _id/name,..
+--permset [+m,-d,+r,-i](at least one) --user|--ug _id/name  --vm|--vmg _id/name
 --permlist [--user| _id/name,.. &| --vm _id/name,..][-ug _][-vmg _]
 
 --maplist [--user| _id/name,.. &| --vm _id/name,..][-ug _][-vmg _]
 --mapdel --user _id/name &| --vm _id/name
+
 
