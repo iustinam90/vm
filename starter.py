@@ -1,5 +1,4 @@
-#!/usr/bin/python
-#import pypureomapi
+#!/usr/bin/python -u
 import commands
 import ast
 import datetime
@@ -8,10 +7,10 @@ import os
 import time
 import sys
 from optparse import OptionParser
+import socket
 
 
-br_name="vbr0" # are 192.168.100.1
-
+ifup="/etc/qemu-scripts/ifup-vlan9.sh"
 
 class VMStarter:
     def __init__(self):pass
@@ -21,15 +20,8 @@ class VMStarter:
         params['exechost']=self.getExechost()
         params['vncport']=self.genVNCport()
         params['tapname']='tapxx'
-#        params['exechost']=self.getExechost()
-#        params['vncport']=self.genVNCport()
-#        params['tapname']=self.genTap()
-        
     
     def startVM(self,disc_paths,smp,mem,ip,mac,exechost,vncport,tapname,install,cdrom,isolate):
-#        self.connectToNetwork(tapname)
-#        if(isolate): 
-#            self.isolateVM(ip,mac,tapname) # mac spoof, inter vm traffic
         # create command
         optional_install=""
         if(cdrom): optional_install=" -boot d -cdrom {0} ".format(cdrom)
@@ -39,29 +31,48 @@ class VMStarter:
         if(len(disc_paths)>=3): hdds+=" -hdc {0} ".format(disc_paths[2])
         if(len(disc_paths)>=4): hdds+=" -hdd {0} ".format(disc_paths[3])
         
-        #/usr/libexec/qemu-kvm [ -boot d -cdrom ..iso ] -hda vm1.qcow2 -vnc :10 -m 1G -smp 1 -net nic,macaddr=DE:AD:BE:EF:CF:87 -net tap,ifname=tap0,script=no,downscript=no &
-#        cmd="/usr/libexec/qemu-kvm {0} -vnc :{1} -m {2} -smp {3} -net nic,macaddr={4} -net tap,ifname={5},script=no,downscript=no \
-#        {6}  &".format(hdds,vncport%100,mem,smp,mac,tapname,optional_install)
-        cmd="/usr/libexec/qemu-kvm {0} -vnc :{1} -m {2} -smp {3}".format(hdds,vncport%100,'1G',1)
+
+        cmd="/usr/libexec/qemu-kvm {0} -vnc :{1} -m {2} -smp {3} -net nic,macaddr={4} -net tap,script={5} {6}  &".format(hdds,vncport%100,mem,smp,mac,ifup,optional_install)
+#        cmd="/usr/libexec/qemu-kvm {0} -vnc :{1} -m {2} -smp {3}".format(hdds,vncport%100,'1G',1)
         print cmd
         
-        child_pid = os.fork()
-        if child_pid == 0:      
-            #if(subprocess.call(cmd,shell=True)): print "error calling kvm";exit(1)
-            if(commands.getstatusoutput(cmd)[0]): print "error calling kvm";exit(1)
-        else:
-            print "Your vm is accessible via host {0} vnc port {1}, display {2}".format(exechost,vncport,vncport%100)
-            vm_running=1
-            while(vm_running):
-                time.sleep(2)
-                # todo prin smth in out to let the controller know if vm is still running
-                sys.stdout.write("k")
-                if(not commands.getstatusoutput("ps aux |grep {0} |grep -v grep ".format(disc_paths[0]))[1]):
-                    print "vm process died"
-                    vm_running=0
-#                    self.removeTap(tapname)
-#                    self.alterEbtables("D",ip,mac,tapname)
+        if(subprocess.call(cmd,shell=True)): print "error calling kvm";exit(1)
+        while(1):
+            print "waiting ",os.getpid()
+            time.sleep(5)
+            sts,outp=commands.getstatusoutput("ps aux |grep /usr/libexec/qemu-kvm |grep {0} |grep -v grep ".format(disc_paths[0])) #there are 2 processes (this one that waits, and the kvm)
+            print "ps: ",sts,outp
+            if(not outp): 
+                self.sendMessageToServer(repr({'dead':1}))
+                self.sock.close()
+                exit(1)
+                
         
+#        child_pid = os.fork() #if not fork will lose output..dunno why yet
+#        if child_pid == 0:      
+#            if(subprocess.call(cmd,shell=True)): print "error calling kvm";exit(1)
+#        else:
+#            print "Your vm is accessible via host {0} vnc port {1}, display {2}".format(exechost,vncport,vncport%100)
+#            vm_running=1
+#            while(vm_running):
+#                time.sleep(2)
+#                # todo prin smth in out to let the controller know if vm is still running
+#                sys.stdout.write("k")
+#                if(not commands.getstatusoutput("ps aux |grep {0} |grep -v grep ".format(disc_paths[0]))[1]):
+#                    print "vm process died"
+#                    vm_running=0
+    
+    def connectToServer(self,ip,port):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock=s
+        print "connecting to {0} {1}".format(ip,port)
+        self.sock.connect((ip, port))
+        print "connected to {0} {1}".format(ip,port)
+
+    def sendMessageToServer(self,msg):
+        print "sending ",msg
+        self.sock.sendall(msg) #sends the entire message (in pieces if necessary)
+        print "sent"
     
     def getExechost(self):
         return commands.getstatusoutput("hostname")[1]
@@ -75,40 +86,6 @@ class VMStarter:
                 ls.remove(int(used_port))
         return min(ls)
     
-    def genTap(self): 
-        ls=range(0,100)
-        # ifconfig -a |grep tap |cut -d' ' -f1
-        p=subprocess.Popen("ifconfig -a |grep tap |cut -d' ' -f1",shell=True,stdout=subprocess.PIPE)
-        for used_tap in p.stdout.readlines():
-            if int(used_tap[3]) in ls: # last digit tap0 >> 0
-                ls.remove(int(used_tap[3]))
-        return "tap"+str(min(ls))
-    
-    def connectToNetwork(self,tapname):
-        # create tap, add to br
-        if(subprocess.call("tunctl -t {0}".format(tapname),shell=True)): print "err"; exit(1)
-        if(subprocess.call("brctl addif {0} {1}".format(br_name,tapname),shell=True)): print "err"; exit(1)
-        if(subprocess.call("ip link set {0} up".format(tapname),shell=True)): print "err"; exit(1)
-        
-    def isolateVM(self,ip,mac,tapname):
-        print "..isolating vm"
-        self.alterEbtables("A",ip,mac,tapname)
-    
-    def removeTap(self,tapname):
-        if(subprocess.call("tunctl -d {0}".format(tapname),shell=True)): print "err"; exit(1)
-     
-    def alterEbtables(self,action,ip,mac,tapname):
-        # mac spoofing
-        if(subprocess.call("ebtables -{0} FORWARD -i {1} -s ! {2} -j DROP".format(action,tapname,mac),shell=True)): print "err"; exit(1)
-        # ip spoofing
-        if(subprocess.call("ebtables -{0} FORWARD -p IPv4 --ip-src ! {1} -s  {2} -j DROP".format(action,ip,mac),shell=True)): print "err"; exit(1)
-        if(subprocess.call("ebtables -{0} FORWARD -p IPv4 --ip-src {1} -s ! {2} -j DROP".format(action,ip,mac),shell=True)): print "err"; exit(1)
-        # inter-vm IP traffic
-        if(subprocess.call("ebtables -{0} FORWARD -i tap+ -o {1} -j DROP".format(action,tapname),shell=True)): print "err"; exit(1)
-        # save
-        if(subprocess.call("service ebtables save",shell=True)): print "err"; exit(1)
-        
-        
 ################################################################################# test area
 
 def get_opts():
@@ -122,6 +99,8 @@ def get_opts():
     parser.add_option("--isolate",dest="isolate",action='store_true',help="Isolates vm from the others",default=False)
     parser.add_option("--install",dest="install",action='store_true',help="if specified, the vm will boot from the cdrom (which must be specified also)",default=False)
     parser.add_option("--cdrom",dest="cdrom",help="specify .iso installation file")
+    parser.add_option("--srvhost",dest="srvhost")
+    parser.add_option("--srvport",dest="srvport")
     (opts,args)=parser.parse_args()
     return opts
     
@@ -133,11 +112,13 @@ if __name__=="__main__":
         sys.stdout = open(args['vmid'], 'w')
     
     params={'exechost':"",'vncport':"",'tapname':""}
+    vms.connectToServer(args['srvhost'], int(args['srvport']))
     vms.getHostParams(params)
-    print "exechost=",params['exechost']
-    print "vncport=",params['vncport']
-    print "tapname=",params['tapname']
+    vms.sendMessageToServer(repr(params))
     
+#    print "exechost=",params['exechost']
+#    print "vncport=",params['vncport']
+#    print "tapname=",params['tapname']
     discs=args['discs'].split(",")
     vms.startVM(discs, args['smp'], args['mem'], args['ip'], args['mac'], params['exechost'],params['vncport'],params['tapname'],
                  args['install'], args['cdrom'], args['isolate']) #to send out filename to kid process (only used if started without qsub)

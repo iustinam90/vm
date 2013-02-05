@@ -2,33 +2,38 @@ import sqlite3
 import os
 import subprocess
 
-debug=1
+debug=0
 
 class DatabaseException:
     def __init__(self,err_string):
         self.err= err_string;
 
-default_admin_home="/export/home/acs/stud/i/iustina_camelia.melinte/vmt"
-defaultDb = "/tmp/vm1.db" #"/root/vm.db"
-#defaultAdmin="503"
-default_ip_range="192.168.100.15-192.168.100.254"
-default_admin_uid=17003 #503
+#default_admin_home="/export/home/acs/stud/i/iustina_camelia.melinte/aa"
+#defaultDb = "/tmp/vm1.db" #"/root/vm.db"
+#default_ip_range="192.168.100.15-192.168.100.254"
+#default_admin_uid=17003 #503
 
 class VMDatabase:
     _dbPath = ""
     
-    def __init__(self):pass
+    def __init__(self,conf):
+        self.conf=conf
+        
     def __del__(self):
         if(hasattr(self,'_conn')): self._conn.close()
         
-    def init(self,db=defaultDb):  
+    def init(self,db):
+        if(not db):
+            raise  DatabaseException("_please provide db")
         if(not os.path.exists(db)): 
             raise  DatabaseException("Database not found at {0}".format(db))
         self._dbPath = db
         self._conn = sqlite3.connect(self._dbPath)
         self._conn.row_factory = sqlite3.Row    # some useful sh.. I guess
       
-    def firstInit(self,db=defaultDb):
+    def firstInit(self,db):
+        if(not db):
+            raise  DatabaseException("_please provide db")
         if(os.path.exists(db)): 
             raise  DatabaseException("Database already exists: {0}".format(db))
         if(subprocess.call("touch {0}".format(db),shell=True)): 
@@ -62,7 +67,7 @@ class VMDatabase:
         if(debug): print "..creating tables"
         self._conn.execute('''CREATE TABLE User (id integer, name text, ip_range text, gid_list text,
             max_running_vm integer, max_storage integer,storage_folder text)''')
-        self._conn.execute('''CREATE TABLE VM (id integer, name text, owner_id integer, vmgid text, storage integer, 
+        self._conn.execute('''CREATE TABLE VM (id integer, name text, owner_id integer, vmgid text, storage text, 
             derivable integer, base_id integer,mac text,ip text,vnc text,desc text,started integer)''')
         self._conn.execute('''CREATE TABLE Permission (user_g_id integer, vm_g_id integer, run integer, modify integer, 
             derive integer, force_isolated integer)''')
@@ -73,8 +78,8 @@ class VMDatabase:
         self._conn.commit()
         self.insert("UserGroup",(0,"admin"))
         self.insert("UserGroup",(1,"all_users"))
-        self.insert("VMGroup",(1,"all_vms",default_ip_range))
-        self.insert("User",(default_admin_uid,'admin1','','(0,)',1000,133000,default_admin_home))
+        self.insert("VMGroup",(1,"all_vms",self.conf['default_ip_range']))
+        self.insert("User",(self.conf['default_admin_uid'],'admin1','','(0,)',1000,133000,self.conf['default_admin_home']))
         self._conn.commit()
     
             
@@ -134,8 +139,8 @@ class VMDatabase:
                 select_stmt+="{0} = ? {1} ".format(key,and_or)
             select_stmt=select_stmt[:-and_or_length]
         
-        #print select_stmt
-        #print tuple(col_dict.values())
+#        print select_stmt
+#        print tuple(col_dict.values())
         cursor=self._conn.execute(select_stmt,tuple(col_dict.values()));
         ls=cursor.fetchall()
         #print ls[0]['vm_g_id']

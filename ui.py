@@ -1,21 +1,48 @@
-#!/usr/bin/python
+#!/usr/bin/python -u
 from optparse import OptionParser
 import commands
+import ConfigParser
 import os
 import re
 import controller
 
-debug=1
+conf_file="/opt/ncit-cloud/vm.ini"
+debug=0
 
 class VMUserInterface:
-    def __init__(self,vmcontroller,real_uid):
-        self.vmcontroller=vmcontroller
+    def __init__(self):
         self.parser=OptionParser()
         self.opts=None
-        self.real_uid=real_uid
+        
+    def getConf(self):
+        config = ConfigParser.ConfigParser()
+        config.read(conf_file)
+        conf=config._sections['conf']
+        errs=""
+        needed_opts="default_db default_ip_range default_admin_uid default_admin_home dhcp_keyname dhcp_secret dhcp_server dhcp_port id_range_limit base_domain_location base_disc_location vmoutdir separator_len watcher_path starter_path"
+        for opt in needed_opts.split(' '):
+            if(not opt in conf.keys()): 
+                print "Missing option: {0}".format(opt);
+                exit(1)
+        dirs="base_disc_location base_domain_location default_admin_home"
+        for d in dirs.split(' '):
+            if(not os.path.isdir(conf[d])):
+                errs+="Path does not exist: {0}".format(conf[d])
+        files="watcher_path starter_path"
+        for f in files.split(' '):
+            if(not os.path.exists(conf[f])):
+                errs+="File does not exist: {0}".format(conf[f])
+        if(not os.path.exists(os.path.dirname(conf['default_db']))):
+            errs+="Database path does not exist: {0}".format(conf['default_db'])
+        if(errs):
+            print "Invalid configuration file: {0}".format(conf_file)
+            print errs
+            exit(1)
+        self.conf=conf
         
     def parseOpts(self):
         # First thing to do
+        self.parser.add_option("--ruid",dest='ruid',help="real user id")
         self.parser.add_option("--init",dest="init",action='store_true',help="to initialize the db when first used",default=False)
         self.parser.add_option("--dbpath",dest="dbpath",help="path to database")
         
@@ -131,7 +158,7 @@ class VMUserInterface:
     
     def path_ok(self,path,is_qcow):
         if(not path or not os.path.exists(path)):
-            "Invalid path: missing/does not exist"
+            print "Invalid path: missing/does not exist: ",path
             return False
         # returns "data" for new images. leave this for now
 #        if(is_qcow):
@@ -281,11 +308,11 @@ class VMUserInterface:
 #            if(not (self.id_number_ok(self.opts_dict['vm_group_s'],'<') or self.name_ok(self.opts_dict['vm_group_s']))):
 #                print "Invalid VM group."
 #                return False
-            newl={}
+            newl={'ids':[],'names':[]}
             if(self.id_number_ok(self.opts_dict['vm_group_s'],'<')):
-                newl['ids']=self.opts_dict['vm_group_s']
+                newl['ids'].append(self.opts_dict['vm_group_s'])
             elif(self.name_ok(self.opts_dict['vm_group_s'])):
-                newl['names']=self.opts_dict['vm_group_s']
+                newl['names'].append(self.opts_dict['vm_group_s'])
             else:
                 print "Invalid VM group."
                 return False
@@ -297,6 +324,8 @@ class VMUserInterface:
         if(self.opts_dict['derivable'] and self.opts_dict['base']):
             print "Invalid option combination: --derivable and --base "
             return False
+        if(self.opts_dict['derivable']):
+            self.opts_dict['derivable']=1
         return True
     
     def check_vm_run(self):
@@ -314,6 +343,14 @@ class VMUserInterface:
         if(self.opts_dict['install'] and not self.path_ok(self.opts_dict['cdrom'], 0)):
             print "Invalid option combination: --install requires a valid --cdrom path"
             return False
+        return True
+    
+    def check_vm_del(self):
+        filteredDict=self.list_ok(self.opts_dict['vm'],'>')
+        if(not filteredDict):
+            print "Invalid action. Usage: --vmdel --vm _id/name[,..]"
+            return False
+        self.opts_dict['vm']=filteredDict
         return True
     ##############################################################################################
     
@@ -392,6 +429,8 @@ class VMUserInterface:
             return self.check_vm_add()
         if(action=='vm_run'):
             return self.check_vm_run()
+        if(action=='vm_del'):
+            return self.check_vm_del()
         if(action=='permset'):
             return self.check_permset()
         if(action=='mapdel'):
@@ -400,7 +439,7 @@ class VMUserInterface:
     ##############################################################################################
     
     # vrfy command arguments and call the controller
-    def extractCommand(self):
+    def extractCommand(self,vmcontroller):
         # these are exclusive, there should be only one: 
         #acts ="ugadd ugdel ugmod vmgadd vmdel vmmod uadd udel umod ulist vmadd vmrun vmmod vmlist permset permlist"
         # don't forget the space at the end, in case you add more !
@@ -418,11 +457,11 @@ class VMUserInterface:
                 action=opt
                 no+=1
         if(no>1 or no<1): 
-            print "err: Too many actions";exit(1)
+            print "err: Too many actions / No action specified";exit(1)
         if(not self.validateArgs(action)):
             print "err: Validating action".format(action);exit(1)
         #print action
-        error=self.vmcontroller.execute(self.real_uid,action,self.opts_dict)
+        error=vmcontroller.execute(self.real_uid,action,self.opts_dict)
         if(error): print error
 
    
@@ -431,11 +470,24 @@ class VMUserInterface:
 def main():
 ##    if(os.getuid()!=0): print "err";exit(1)
 #    real_uid=commands.getstatusoutput("echo $SUDO_USER | xargs -I name id -u name ")[1] 
-    real_uid=os.getuid()
-    vmcontroller=controller.VMController(real_uid)
-    ui=VMUserInterface(vmcontroller,real_uid)
+#    real_uid=os.getuid()
+    
+    
+    ui=VMUserInterface()
+    ui.getConf()
     ui.parseOpts()
-    ui.extractCommand()
+    
+    #print "you ",os.getuid()
+    #os.setuid(int(ui.opts.ruid))
+    #print "you ",os.getuid()
+    
+    ui.real_uid=ui.opts.ruid
+    if(not ui.real_uid):
+        print "--ruid (real uid) missing"
+        exit(1)
+    vmcontroller=controller.VMController(ui.conf)
+    vmcontroller.setRUID(ui.real_uid)
+    ui.extractCommand(vmcontroller)
     
 
 if __name__ == "__main__": main()

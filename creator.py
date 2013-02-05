@@ -1,19 +1,22 @@
 import commands
-#import pypureomapi
+import pypureomapi
 import datetime
 import os
 import subprocess
 import sys
 import db
 
-debug=1
-dhcp_keyname = "omapi_key"
-dhcp_secret = "KaekLmmyUj2RLvC8c1lj15AJ3gOIScUo/PjabCirckCw1lxSAj0hyIEASRaptg3gk33XHUrglPzQK1len7LhMQ=="
-dhcp_server = "127.0.0.1"
-dhcp_port = 9991
+debug=0
+#dhcp_keyname = "omapi_key"
+#dhcp_secret = "KaekLmmyUj2RLvC8c1lj15AJ3gOIScUo/PjabCirckCw1lxSAj0hyIEASRaptg3gk33XHUrglPzQK1len7LhMQ=="
+#dhcp_server = "127.0.0.1"
+#dhcp_port = 9991
+#chown_gid=9007
 
 class VMCreator:
-    def __init__(self): self.db=None
+    def __init__(self,conf): 
+        self.db=None
+        self.conf=conf
 
 
     #unused
@@ -36,67 +39,80 @@ class VMCreator:
         
     # storage is list of sizes [100,..] , base_storage is {'basepath1':size,..} or ['path1',..] 
     # returns dict {'path':size,..}
-    def createDiscs(self,base_storage,discs_basename,location,storage,action):
+    def createDiscs(self,base_storage,discs_basename,location,storage,action,real_uid):
         if(db.debug): print "..creating disc ",discs_basename," location ",location,' base storage ',base_storage
         new_storage={}
         path=os.path.join(location,discs_basename)
         
         if(action=='clone'): 
-            i=0
-            sorted_base_storage_keys=base_storage.keys()
-            sorted_base_storage_keys.sort()
-            for base_path in sorted_base_storage_keys:
-                mpath=path+"_{0}.qcow2".format(i)
-                cmd="qemu-img create -f qcow2 -b {0} {1} >/dev/null 2>&1".format(base_path,mpath)
-                if(db.debug): print cmd
-                i+=1
-                new_storage[mpath]=base_storage[base_path]
-                if(subprocess.call(cmd,shell=True)): print "err: creating disc (qemu-img with base)"; exit(1)
-                if(not os.path.isfile(mpath)): print "err: cloned file is not there..funny"; exit(1)
+            for i in base_storage.keys():
+                new_storage[i]={}
+                new_storage[i]['path']=path+"_{0}.qcow2".format(i)
+                cmd="qemu-img create -f qcow2 -b {0} {1}".format(base_storage[i]['path'],new_storage[i]['path'])
+                if(debug): print cmd
+#                new_storage[mpath]=base_storage[base_path]
+                new_storage[i]['size']=base_storage[i]['size']
+                out=commands.getstatusoutput(cmd)
+                if(out[0]): print "err: creating disc (qemu-img with base): ",out[1]; exit(1)
+                #if(subprocess.call(cmd,shell=True)): print "err: creating disc (qemu-img with base)"; exit(1)
+                if(not os.path.isfile(new_storage[i]['path'])): print "err: cloned file is not there..funny"; exit(1)
+                os.chown(new_storage[i]['path'], int(real_uid), -1)
         elif(action=='create'):
             # create new discs based on storage sizes
             i=0
             for size in storage:
                 mpath=path+"_{0}.qcow2".format(i)
-                cmd="qemu-img create -f qcow2 {0} {1}M >/dev/null 2>&1".format(mpath,size)
-                if(db.debug): print cmd
-                i+=1
-                new_storage[mpath]=size
+                cmd="qemu-img create -f qcow2 {0} {1}M ".format(mpath,size) #>/dev/null 2>&1
+                if(debug): print cmd
+                new_storage[i]={}
+                new_storage[i]['path']=mpath
+                new_storage[i]['size']=size
                 if(subprocess.call(cmd,shell=True)): print "err: creating disc (qemu-img create)"; exit(1)
                 if(not os.path.isfile(mpath)): print "err: created file is not there..funny"; exit(1)
-        elif(action=='copy'):
-            # this is when we have preexisting discs and we want to make them derivable( copy in templates location)
+                os.chown(new_storage[i]['path'], int(real_uid), -1)
+                i+=1
+        elif(action=='keep_base'):
+            # this is when we have preexisting discs and we want to make them derivable
+            # copy discs in templates location if not already there, RENAME to our convention
             # qemu-img info vs1.qcow2 |grep virtual |cut -d'(' -f2 |cut -d' ' -f1
             i=0
             for base_path in base_storage:
                 mpath=path+"_{0}.qcow2".format(i)
                 if(os.path.exists(mpath) and os.path.samefile(base_path,mpath)):
-                    if(db.debug): print "same file: ",base_path,mpath
+                    if(debug): print "same file: ",base_path,mpath
                 else:
-                    cmd="cp {0} {1} >/dev/null 2>&1 ".format(base_path,mpath)
-                    if(db.debug): print cmd
-                    if(subprocess.call(cmd,shell=True)): print "err"; exit(1)
-                i+=1
+                    cmd="cp {0} {1} ".format(base_path,mpath)
+                    if(debug): print cmd
+                    if(subprocess.call(cmd,shell=True)): print "err"; exit(1)     
                 if(db.debug): print "checking size"
                 if(not os.path.isfile(mpath)): print "err: created file is not there..funny"; exit(1)
-                new_storage[mpath]=int(commands.getstatusoutput('qemu-img info {0} |grep virtual |cut -d"(" -f2 |cut -d" " -f1'.format(mpath))[1][:-6])
-        elif(action=='rename'):
+                
+#                mpath=base_path #todo remove
+                new_storage[i]={}
+                new_storage[i]['path']=mpath
+                new_storage[i]['size']=int(commands.getstatusoutput('qemu-img info {0} |grep virtual |cut -d"(" -f2 |cut -d" " -f1'.format(mpath))[1][:-6])
+                os.chown(new_storage[i]['path'], int(real_uid), -1)
+                i+=1
+        elif(action=='keep'):
             #  renames, keeps paths
             i=0
             for base_path in base_storage:
                 #path= os.path.abspath("_".join(base_path.split('_')[:-1]))
-                mpath=os.path.abspath(base_path+"_{0}.qcow2".format(i))
-                if(debug): print "renaming ",base_path,mpath
-                if(os.path.exists(mpath) and os.path.samefile(base_path,mpath)):
-                    if(debug): print "same file: ",base_path,mpath
-                else:
-                    cmd="mv {0} {1} ".format(base_path,mpath)
-                    if(debug): print cmd
-                    if(subprocess.call(cmd,shell=True)): print "err: movin file"; exit(1)
+#                mpath=os.path.abspath(base_path+"_{0}.qcow2".format(i))
+#                if(debug): print "renaming ",base_path,mpath
+#                if(os.path.exists(mpath) and os.path.samefile(base_path,mpath)):
+#                    if(debug): print "same file: ",base_path,mpath
+#                else:
+#                    cmd="mv {0} {1} ".format(base_path,mpath)
+#                    if(debug): print cmd
+#                    if(subprocess.call(cmd,shell=True)): print "err: movin file"; exit(1)
+                if(not os.path.isfile(base_path)): print "err: the file is not there..funny"; exit(1)
+                new_storage[i]={}
+                new_storage[i]['path']=os.path.abspath(base_path)
+                new_storage[i]['size']=int(commands.getstatusoutput('qemu-img info {0} |grep virtual |cut -d"(" -f2 |cut -d" " -f1'.format(base_path))[1][:-6])
+                os.chown(new_storage[i]['path'], int(real_uid), -1)
                 i+=1
-                if(not os.path.isfile(mpath)): print "err: created file is not there..funny"; exit(1)
-                new_storage[mpath]=int(commands.getstatusoutput('qemu-img info {0} |grep virtual |cut -d"(" -f2 |cut -d" " -f1'.format(mpath))[1][:-6])
-        
+                
         return new_storage
     
     def ipstr_to_number(self,s):
@@ -155,11 +171,11 @@ class VMCreator:
             print "creator: Please give the db"
             exit(1)
         #instruct dchp
-        try:
-            oma = pypureomapi.Omapi(dhcp_server, dhcp_port, dhcp_keyname, dhcp_secret, debug=False)
-            oma.add_host(ip,mac) #gives an err if entry is already there
-        except pypureomapi.OmapiError as err:
-            print "OMAPI error: {0}".format(err)
+#        try:
+#            oma = pypureomapi.Omapi(self.conf['dhcp_server'],int(self.conf['dhcp_port']), self.conf['dhcp_keyname'], self.conf['dhcp_secret'], debug=False)
+#            oma.add_host(ip,mac) #gives an err if entry is already there
+#        except pypureomapi.OmapiError as err:
+#            print "OMAPI error: {0}".format(err)
         #insert in db
         # Mapping (user_g_id integer, vm_g_id integer, ip text, mac text, isolated integer,exechost text, vncport integer, date text)
         date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -168,7 +184,16 @@ class VMCreator:
             self.db.insert('Mapping', row)
         except db.DatabaseException as e:  
             print e.err
-    
+            
+    def updateDHCPMapping(self,ruid,vm_id,exechost,vnc):
+        if(not self.db):
+            print "creator: Please give the db"
+            exit(1)
+        try:
+            self.db.update2('Mapping', ruid, vm_id,{'exechost':exechost,'vncport':vnc})
+        except db.DatabaseException as e:  
+            print e.err
+            
     def removeDHCPMapping(self,ip,mac):
         if(not self.db):
             print "creator: Please give the db"

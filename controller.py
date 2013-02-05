@@ -6,25 +6,35 @@ import subprocess
 import authorizer
 import creator
 import starter
+import socket
+import sys
+import time
 #too.. to parse it twice
 
-debug=1
+debug=0
 id_range_limit=500
+base_domain_location="/etc/libvirt/qemu/"
+base_disc_location="/tmp"
+vmoutdir=os.getcwd()+"/run"
+separator_len=150 #for printing entries in db
+#watcher_path="/opt/ncit-cloud/watcher.py"
+#starter_path="/opt/ncit-cloud/starter.py"
+#starter_path="/export/home/acs/stud/i/iustina_camelia.melinte/aa/starter.py"
+serverhost="10.42.0.2"
 
 
 #def_db_path="vm.db"
 #base_disc_location="/var/lib/libvirt/images/"
-base_domain_location="/etc/libvirt/qemu/"
-base_disc_location="/tmp"
-vmoutdir="run"
-separator_len=150 #for printing entries in db
 
 class VMController:
-    def __init__(self,real_uid):
-        self.real_uid=real_uid
-        self.db=db.VMDatabase()
+    def __init__(self,conf):
+        self.conf=conf
+        self.db=db.VMDatabase(self.conf)
         self.db_initialized=0
         self.authorizer=authorizer.Authorizer()
+        
+    def setRUID(self,real_uid):
+        self.real_uid=real_uid
         
     def verify(self,what_to_check,items):
         if(not self.db_initialized):
@@ -38,7 +48,7 @@ class VMController:
             return
         try:
             #self.db=db.VMDatabase()
-            self.db.init(db.defaultDb)
+            self.db.init(self.conf['default_db'])
             self.db_initialized=1
         except db.DatabaseException as e:  
             print e.err
@@ -52,7 +62,7 @@ class VMController:
 #            return "Not allowed"
         #create db in dbpath
         try: 
-            self.db.firstInit(db=args['dbpath'])
+            self.db.firstInit(args['dbpath'])
         except db.DatabaseException as e:
             return e.err
         return
@@ -75,9 +85,10 @@ class VMController:
             return "Not allowed"
         try: 
             for ugname in args['user_group_s']['names']:
-                self.db.deleteRowsWithCriteria("UserGroup",'and',{'name':ugname}) 
+                args['user_group_s']['ids'].append(self.db.getOneRowWithCriteria("UserGroup",'*','and',{'name':ugname})['id'])
             for ugid in args['user_group_s']['ids']:
                 self.db.deleteRowsWithCriteria("UserGroup",'and',{'id':ugid}) 
+                self.db.deleteRowsWithCriteria("Permission",'and',{'user_g_id':ugid}) 
         except db.DatabaseException as e:
             return e.err
         
@@ -112,7 +123,7 @@ class VMController:
         if(not self.verify('isadmin',{'who':self.real_uid})):
             return "Not allowed"
         # UserGroup (id integer, name text, ip_range text)
-        row=(args['vm_group_id'],args['name'],'') #todo add iprange
+        row=(args['vm_group_id'],args['name'],args['ip_range']) #todo add iprange
         if(db.debug): print "row ",row
         try: 
             self.db.insert("VMGroup",row) 
@@ -124,9 +135,10 @@ class VMController:
             return "Not allowed"
         try: 
             for ugname in args['vm_group_s']['names']:
-                self.db.deleteRowsWithCriteria("VMGroup",'and',{'name':ugname}) 
+                args['vm_group_s']['ids'].append(self.db.getOneRowWithCriteria("VMGroup",'*','and',{'name':ugname})['id'])
             for ugid in args['vm_group_s']['ids']:
-                self.db.deleteRowsWithCriteria("VMGroup",'and',{'id':ugid}) 
+                self.db.deleteRowsWithCriteria("VMGroup",'and',{'id':ugid})
+                self.db.deleteRowsWithCriteria("Permission",'and',{'vm_g_id':ugid}) 
         except db.DatabaseException as e:
             return e.err
         
@@ -206,10 +218,17 @@ class VMController:
             return e.err
         return
     
-#    def deleteUser(self,user):
-#        # getOneByNameOrId("User",user), scot uid
-#        # delete("User",uid)
-#        pass
+    def delUser(self,args):
+        if(not self.verify('isadmin',{'who':self.real_uid})):
+            return "Not allowed"
+        try: 
+            for uname in args['user']['names']:
+                args['user']['ids'].append(self.db.getOneRowWithCriteria("User",'*','and',{'name':uname})['id'])
+            for uid in args['user']['ids']:
+                self.db.deleteRowsWithCriteria("User",'and',{'id':uid}) 
+                self.db.deleteRowsWithCriteria("Permission",'and',{'user_g_id':uid}) 
+        except db.DatabaseException as e:
+            return e.err
 #    
 #    def setUserDetail(self,user,detail,value):
 #        # getOneByNameOrId("User",user), scot uid
@@ -239,13 +258,7 @@ class VMController:
             self.db.setPermissions(user_id, vm_id, args['permset'])                                                  
         except db.DatabaseException as e:  
             return e.err 
-#    
-#    def getVMsWithPermission(self, user_id, perm):  
-#        # user wants to find out which vms he has permission on; perm is "run"/"modify"/"derive"/"force_isolated"
-#        #  
-#        # 
-#        pass   
-    
+
     # --permlist [--user _id/name -ug _id/name --vm _uuid/name  -vmg _id/name]
     # user user_group_s vm vm_group
     # users can only see the perms that their uid/gids have
@@ -284,6 +297,14 @@ class VMController:
     def addVM(self,args):#,real_uid,name,mac,ip,storage,derivable=False,base_uuid=0,desc=""):
         
         self._initDB() 
+
+        ################### check if vm name already exists        
+        try: 
+            rows=self.db.getRowsWithCriteria('VM','*','and',{'name':args['name']})
+            if(len(rows)>0):
+                raise db.DatabaseException("VM name taken")
+        except db.DatabaseException as e:  
+            return e.err
         ################### check storage limit
         if(not args['storage']):
             args['storage']=[]
@@ -300,7 +321,8 @@ class VMController:
             all_storage=0
             rows=self.db.getRowsWithCriteria('VM','*', 'and', {'owner_id':self.real_uid})
             for row in rows:
-                disc_sizes=sum(ast.literal_eval(row['storage']).values())   #list of sizes
+                stor_dict=ast.literal_eval(row['storage'])
+                disc_sizes=sum(stor_dict[key]['size'] for key in stor_dict.keys())   #list of sizes
                 all_storage+=disc_sizes
         except db.DatabaseException as e:  
             return e.err 
@@ -322,28 +344,28 @@ class VMController:
                 vmgid=ast.literal_eval(rows[0]['vmgid'])
             except db.DatabaseException as e:  
                 return e.err    
-            if(not self.verify('derive',{'who':(self.real_uid,)+gid_list,'what':(base_id,)+vmgid})):
+            if(not self.verify('derive',{'who':(self.real_uid,)+gid_list,'what':(base_id,vmgid)})):
                 return "You don't have permission to derive this vm"
         
-        vmc=creator.VMCreator()
+        vmc=creator.VMCreator(self.conf)
         # create discs in user home., if derivable create it in base_disc_location, base_domain_location, if from base clone discs
         discs_basename=str(self.real_uid)+"_"+args['name']
 
         if(args['derivable'] and not args['use_discs']):
-            print "call create template"
-            storage=vmc.createDiscs("", discs_basename, base_disc_location,args['storage'],'create')
+            if(debug): print "call create template"
+            storage=vmc.createDiscs("", discs_basename, self.conf['base_disc_location'],args['storage'],'create',self.real_uid)
         elif(args['base']):
-            print "call clone"
-            storage=vmc.createDiscs(base_storage, discs_basename, storage_folder,{},'clone')
+            if(debug): print "call clone"
+            storage=vmc.createDiscs(base_storage, discs_basename, storage_folder,{},'clone',self.real_uid)
         elif(args['derivable'] and args['use_discs']):
-            print "call copy"
-            storage=vmc.createDiscs(args['use_discs'], discs_basename, base_disc_location,{},'copy') #copy to templates dir
+            if(debug): print "call keep template(copy in dir if not there)"
+            storage=vmc.createDiscs(args['use_discs'], discs_basename, self.conf['base_disc_location'],{},'keep_base',self.real_uid) #copy to templates dir
         elif(not args['derivable'] and args['use_discs']):
-            print "call rename"
-            storage=vmc.createDiscs(args['use_discs'], discs_basename, storage_folder,{},'rename') #
+            if(debug): print "call keep"
+            storage=vmc.createDiscs(args['use_discs'], discs_basename, storage_folder,{},'keep',self.real_uid) #
         else:
-            print "call create"
-            storage=vmc.createDiscs("", discs_basename, storage_folder,args['storage'],'create')
+            if(debug): print "call create"
+            storage=vmc.createDiscs("", discs_basename, storage_folder,args['storage'],'create',self.real_uid)
         
         #uuid=vmc.genUUID()
         # create domain /clone domain and change uuid name stordir..#todo
@@ -356,15 +378,18 @@ class VMController:
                 if(args['vm_group_s']['ids']):
                     vmgid=args['vm_group_s']['ids']
                 elif(args['vm_group_s']['names']):
-                    vmgid=args['vm_group_s']['names']
-        
+                    try: 
+                        vmgid=self.db.getOneRowWithCriteria('VMGroup','*', 'and', {'name':args['vm_group_s']['names'][0]})['id']
+                    except db.DatabaseException as e:
+                        return e.err      
+
         # VM (id, name, owner_id, vmgid, storage,derivable, base_uuid,mac,ip,vnc,desc,started)
         try:
             new_id=self.db.genNextId('VM','>')
             row=(new_id,args['name'],self.real_uid,str(vmgid),str(storage),args['derivable'],base_id,"","","",args['desc'],0)
             if(db.debug): print row
             self.db.insert('VM', row) # throws exc if name/id dupl
-            self.db.setPermissions(self.real_uid,new_id,{'run':1,'modify':1,'derive':1,'force_isolated':0})
+            self.db.setPermissions(self.real_uid,new_id,{'run':1,'modify':1,'derive':args['derivable'],'force_isolated':0})
         except db.DatabaseException as e:  
             return e.err 
         
@@ -395,19 +420,23 @@ class VMController:
             if(not args['isolate']):
                 if(self.verify('force_isolated',{'who':(self.real_uid,)+gid_list,'what':(vm_id,vmgid)})):
                     return "You don't have permission to run this vm unisolated"
-            
+            #vrfy vm is already running
             rows=self.db.getRowsWithCriteria('Mapping','*','and',{'vm_g_id':vm_id})
             if(len(rows)>=1):
                 raise db.DatabaseException("Your vm is already running")
         except db.DatabaseException as e:  
             return e.err 
 
-        vms=starter.VMStarter()
-        vmc=creator.VMCreator()
+        #vms=starter.VMStarter()
+        vmc=creator.VMCreator(self.conf)
         vmc.db=self.db
         
-        disc_paths=discs.keys() 
-        disc_paths.sort()       #put them in order : _0.qcow2,_1.qcow2 etc
+#        disc_paths=discs.keys() 
+#        disc_paths.sort()       #put them in order : _0.qcow2,_1.qcow2 etc
+        disc_paths=[discs[e]['path'] for e in discs.keys()]
+        for disc in disc_paths:
+            if(not os.path.exists(disc)):
+                return "err: Disc file does not exist: {0}".format(disc)
         ip=vmc.genFreeIP(vmgid)
         mac=vmc.genMACfromIP(ip)
         
@@ -420,16 +449,18 @@ class VMController:
         
         #create process
         if(db.debug): print disc_paths
-        if(not os.path.isdir(vmoutdir)):  #todo configurable,move in init
-            print "vmout dir not here"
-            exit(1)
-        vmoutfile=os.path.join(vmoutdir,str(vm_id)) 
+        if(not os.path.isdir(self.conf['vmoutdir'])):  #todo configurable,move in init
+            os.mkdir(self.conf['vmoutdir'])
+#            print "vmout dir not here"
+#            exit(1)
+        vmoutfile=os.path.join(self.conf['vmoutdir'],str(vm_id)) 
         
         #used for runing as a process , with --vmid
         #cmd="python starter.py --discs {0} --smp {1} --mem {2} --ip {3} --mac {4} --vmid {5} ".format(','.join(disc_paths),args['smp'],args['mem'],ip,mac,vmoutfile)
         
-        cmd="python -u starter.py --discs {0} --smp {1} --mem {2} --ip {3} --mac {4}".format(','.join(disc_paths),args['smp'],args['mem'],ip,mac)
-        cmd_watcher="python watcher.py --uid {0} --vmid {1} --ip {2} --mac {3} --file {4} ".format(self.real_uid,vm_id,ip,mac,vmoutfile)
+        
+        cmd="sudo {0} --discs {1} --smp {2} --mem {3} --ip {4} --mac {5}".format(self.conf['starter_path'],','.join(disc_paths),args['smp'],args['mem'],ip,mac)
+        cmd_watcher="python {0} --uid {1} --vmid {2} --ip {3} --mac {4} --file {5} ".format(self.conf['watcher_path'],self.real_uid,vm_id,ip,mac,vmoutfile)
         
         if(args['isolate']):
             cmd=cmd+" --isolate "
@@ -437,28 +468,78 @@ class VMController:
         if(args['install']):
             cmd=cmd+" --install --cdrom {0} ".format(args['cdrom'])
             
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind((serverhost, 0)) #ask for a free port  
+        port=s.getsockname()[1] #get the port
+        cmd+=" --srvhost {0} --srvport {1} ".format(serverhost,port)
+        if(debug): print cmd
+        
         cmd_watcher+=" &"
         
         #cmd_job="echo '{0}' |qsub -S /usr/bin/python -o {1} ".format(cmd,vmoutfile)
         job_file=vmoutfile+".sh"
-        job_kvm="#!bin/bash \n {0} \n".format(cmd)
-        job_cmd="qsub -N kvm{0} -o {1} -cwd -l h=quad-wn05 {2}".format(vm_id,vmoutfile,job_file)
+        job_kvm="#!/bin/bash \n {0} \n".format(cmd)
+        job_cmd="qsub -N kvm{0} -o {1} -cwd -l h=quad-wn14 {2}".format(vm_id,vmoutfile,job_file)
         m=open(job_file,"w")
         m.write(job_kvm)
         m.close()
         if(debug): print "job_file",job_file,job_kvm,"\n",job_cmd,"\n",cmd_watcher
         #as a process
         #if(subprocess.call(cmd,shell=True)): print "err: calling starter"; exit(1)
-        #as a job
-        #if(subprocess.call(cmd_job,shell=True)): print "err: calling starter job"; exit(1)
         #as a job with command in file
-        if(subprocess.call(job_cmd,shell=True)): print "err: calling starter job"; exit(1)
-
-        if(subprocess.call(cmd_watcher,shell=True)): print "err: calling watcher"; exit(1)
-        #todo
-        #vmc.addDHCPMapping(self.real_uid,vm_id,ip,mac,args['isolate'],params['exechost'],params['vncport'],params['tapname'])
-        #vmc.removeDHCPMapping(ip,mac)
         
+        vmc.addDHCPMapping(self.real_uid,vm_id,ip,mac,args['isolate'],"","","")
+
+        child_pid = os.fork() 
+        if child_pid == 0:  
+            sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0) #unbuffer stdout     
+            s.listen(1)
+            conn, addr = s.accept()
+            if(debug): print 'Connected by', addr
+            while 1:
+                data = conn.recv(1024)
+                if not data: 
+                    if(debug): print "No more data, delete mapping" 
+                    vmc.removeDHCPMapping(ip,mac)
+                    os.unlink(vmoutfile)
+                    break
+                msg=eval(data) #could be {'exechost':"",'vncport':"",'tapname':""} or {'died':1}
+                if('exechost' in msg):
+                    print "Your vm is accessible via host {0} , display {1}".format(msg['exechost'],int(msg['vncport'])%100)
+                    #update mapping
+                    vmc.updateDHCPMapping(self.real_uid,vm_id,msg['exechost'],int(msg['vncport']))
+                if('died' in msg):
+                    if(debug): print "Process died, delete mapping"
+                    vmc.removeDHCPMapping(ip,mac)
+                    os.unlink(vmoutfile)
+            conn.close()
+        elif child_pid==-1:
+            print "error fork"
+        else:
+            time.sleep(2) #wait for parent to create a socket
+            os.setuid(int(self.real_uid))
+            if(subprocess.call(job_cmd,shell=True)): print "err: calling starter job"; exit(1)
+            
+        
+            
+#        if(subprocess.call(cmd_watcher,shell=True)): print "err: calling watcher"; exit(1)
+        
+    
+        
+    
+    def delVM(self,args):
+        self._initDB()
+        try: 
+            for vmname in args['vm']['names']:
+                args['vm']['ids'].append(self.db.getOneRowWithCriteria('VM','*','and',{'name':vmname})['id'])
+            for vmid in args['vm']['ids']:
+                if(not (self.verify('isowner',{'who':self.real_uid,'what':vmid}) or self.verify('isadmin',{'who':self.real_uid}))):
+                    return "Not allowed"
+                else:
+                    self.db.deleteRowsWithCriteria("VM",'and',{'id':vmid})  
+                    self.db.deleteRowsWithCriteria("Permission",'and',{'vm_g_id':vmid})  
+        except db.DatabaseException as e:
+            return e.err
 
     def listVM(self,args):
         self._initDB()
@@ -475,8 +556,10 @@ class VMController:
                                                                       'derivable','base_id','desc','storage')
             print '-'*separator_len
             for row in rows:
+                stor=ast.literal_eval(row['storage'])
                 print "%-5s %-22s %-10s %-10s %-11s %-9s %-30s %s"%(row['id'],row['name'],row['owner_id'],row['vmgid'],
-                                                                                        row['derivable'],row['base_id'],row['desc'],row['storage'],)
+                                                                                        row['derivable'],row['base_id'],row['desc'],
+                                                                                        [[stor[e]['path'],stor[e]['size']] for e in stor.keys()])
         except db.DatabaseException as e:
             return e.err
         return
@@ -540,10 +623,14 @@ class VMController:
             e=self.addUser(args)
         elif(action=='user_list'):
             e=self.listUsers(args)
+        elif(action=='user_del'):
+            e=self.delUser(args)
         elif(action=='vm_add'):
             e=self.addVM(args)
         elif(action=='vm_run'):
             e=self.runVM(args)
+        elif(action=='vm_del'):
+            e=self.delVM(args)
         elif(action=='vm_list'):
             e=self.listVM(args)
         elif(action=='permlist'):
