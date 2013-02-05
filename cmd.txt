@@ -1,4 +1,3 @@
-
 --init --dbpath //face baza de date
 
 --ugadd --name _ --ugid _ 
@@ -17,7 +16,7 @@
 --ulist [--ug _,_ --str _ --vm _ ] //todo
 
 --vmadd --name _ [ --vmg _id1/name (!unul) --desc _ --derivable] --stor 1G,500M | --base _id/name | --usediscs path1,path2.. //[ --uuid _ --mem 2G --smp 1   ] 
---vmdel --vm _id/name
+--vmdel --vm _id/name,_id2/name2,..
 --vmrun --vm _id/name [--mem _ --smp _ --install --cdrom _ --isolate] 
 --vmmod --vm _id/name [--name _ --uuid _ --owner _ --derivable --noderivable] //nu putem modif stor/base_uuid]
 --vmlist [--owner _ --vmg _,_ --perm [d,m,r,i] --user _] [--running]

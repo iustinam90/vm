@@ -1,0 +1,36 @@
+PATH=$PATH:/opt/ncit-cloud
+cd /opt/ncit-cloud
+
+vi vm.ini ##
+
+vmapp --init --dbpath /opt/ncit-cloud/vm.db
+
+vmapp --uglist
+vmapp --vmglist
+vmapp --ulist
+
+vmapp --ugadd --name studs --ugid 10
+vmapp --uglist
+
+vmapp --vmgadd --name lab --vmgid 3 --iprange 10.42.31.1-10.42.31.254
+vmapp --vmglist
+
+vmapp --uadd --name iustina --uid 17003 --ug studs --stordir /export/home/acs/stud/i/iustina_camelia.melinte/aa/
+vmapp --ulist
+
+vmapp --vmadd --name gsr_vm --vmg lab --derivable --usediscs /export/home/acs/stud/i/iustina_camelia.melinte/aa/templates/0_gsr_vm_0.qcow2 
+vmapp --vmlist # e in folderul templates al meu
+vmapp --permset +d,+i --ug studs --vm gsr_vm
+vmapp --permlist ###
+
+
+///iustina
+vmapp --vmadd --name myvm --base gsr_vm
+vmapp --vmlist
+vmapp --permlist
+vmapp --vmrun --vm myvm --mem 2G
+vmapp --vmrun --vm myvm --mem 2G --isolate
+
+
+watch vmapp --maplist
+
