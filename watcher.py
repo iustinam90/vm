@@ -93,6 +93,6 @@ if __name__ == "__main__":
     vmw.watchHostParams(args['file'],params) #wait for host params (tap,vnc,hostname) 
     if(debug): print "watcher",params
     vmc.addDHCPMapping(args['uid'],args['vmid'],args['ip'],args['mac'],args['isolate'],params['exechost'],params['vncport'],params['tapname'])
-    vmw.watchVMdies(args['file']) #todo file
+    vmw.watchVMdies(args['file'])
     vmc.removeDHCPMapping(args['ip'],args['mac'])
     

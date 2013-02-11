@@ -11,6 +11,7 @@ import socket
 
 
 ifup="/etc/qemu-scripts/ifup-vlan9.sh"
+ifup_isolate="/etc/qemu-scripts/ifup-vlan9-single.sh"
 
 class VMStarter:
     def __init__(self):pass
@@ -31,8 +32,12 @@ class VMStarter:
         if(len(disc_paths)>=3): hdds+=" -hdc {0} ".format(disc_paths[2])
         if(len(disc_paths)>=4): hdds+=" -hdd {0} ".format(disc_paths[3])
         
+        if(isolate):
+            script=ifup_isolate
+        else:
+            script=ifup
 
-        cmd="/usr/libexec/qemu-kvm {0} -vnc :{1} -m {2} -smp {3} -net nic,macaddr={4} -net tap,script={5} {6}  &".format(hdds,vncport%100,mem,smp,mac,ifup,optional_install)
+        cmd="/usr/libexec/qemu-kvm {0} -vnc :{1} -m {2} -smp {3} -net nic,macaddr={4} -net tap,script={5} {6}  &".format(hdds,vncport%100,mem,smp,mac,script,optional_install)
 #        cmd="/usr/libexec/qemu-kvm {0} -vnc :{1} -m {2} -smp {3}".format(hdds,vncport%100,'1G',1)
         print cmd
         
@@ -78,7 +83,7 @@ class VMStarter:
         return commands.getstatusoutput("hostname")[1]
     
     def genVNCport(self):
-        ls=range(5901,5999) #todo ce porturi poate avea vnc
+        ls=range(5901,5999) 
         #netstat -an |grep :59 |tr -s ' ' |cut -d' ' -f4 | cut -d: -f2  >>> [5901,5902,...]
         p=subprocess.Popen("netstat -an |grep :59 |tr -s ' ' |cut -d' ' -f4 | cut -d: -f2",shell=True,stdout=subprocess.PIPE)
         for used_port in p.stdout.readlines():
@@ -90,7 +95,7 @@ class VMStarter:
 
 def get_opts():
     parser=OptionParser()
-    parser.add_option("--vmid",dest="vmid",help="",default="") #todo do not use, now use for output filename
+    parser.add_option("--vmid",dest="vmid",help="",default="") #use for output filename
     parser.add_option("--discs",dest="discs",help="")  # ['path1','path2',..]
     parser.add_option("--ip",dest="ip",help="")
     parser.add_option("--mac",dest="mac",help="")

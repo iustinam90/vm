@@ -127,18 +127,16 @@ class VMCreator:
         if(not self.db):
             print "creator: Please give the db"
             exit(1)
-        # subnet for uid/gids , usedIPs from mappings #  or ask dhcp, maybe look in leases. #todo
+        # subnet for uid/gids , usedIPs from mappings #  or ask dhcp, maybe look in leases. 
         try:
             row=self.db.getOneRowWithCriteria('VMGroup','*','and',{'id':vmgid})
             ip_range=row['ip_range']  #"192.168.100.15-192.168.100.254"
             min_ip,max_ip=ip_range.split('-')
             min_ip=self.ipstr_to_number(min_ip)
             max_ip=self.ipstr_to_number(max_ip)
-            # find used IPs (mappings) from this range #todo; for now, use 192.168.100
+            # find used IPs (mappings) from this range 
             rows=self.db.getRowsWithCriteria('Mapping','ip', '', {})
             if(db.debug): print rows
-            #todo ..this is just for /24 and 192.168.100.0; use some conversion for the host bits, a number(for using the range)
-            # this may be slow..if too many mappings exist
             
             nlist=range(min_ip,max_ip)
             for row in rows:
@@ -171,11 +169,12 @@ class VMCreator:
             print "creator: Please give the db"
             exit(1)
         #instruct dchp
-#        try:
-#            oma = pypureomapi.Omapi(self.conf['dhcp_server'],int(self.conf['dhcp_port']), self.conf['dhcp_keyname'], self.conf['dhcp_secret'], debug=False)
-#            oma.add_host(ip,mac) #gives an err if entry is already there
-#        except pypureomapi.OmapiError as err:
-#            print "OMAPI error: {0}".format(err)
+        try:
+            oma = pypureomapi.Omapi(self.conf['dhcp_server'],int(self.conf['dhcp_port']), self.conf['dhcp_keyname'], self.conf['dhcp_secret'], debug=False)
+            oma.add_host(ip,mac) #gives an err if entry is already there
+        except pypureomapi.OmapiError as err:
+            if(not "add failed" in str(err)):
+                print "OMAPI error: {0}".format(err)
         #insert in db
         # Mapping (user_g_id integer, vm_g_id integer, ip text, mac text, isolated integer,exechost text, vncport integer, date text)
         date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")

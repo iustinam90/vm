@@ -2,7 +2,7 @@ import sqlite3
 import os
 import subprocess
 
-debug=0
+debug=1
 
 class DatabaseException:
     def __init__(self,err_string):
@@ -83,13 +83,27 @@ class VMDatabase:
         self._conn.commit()
     
             
-    # this can update any set of columns ("mappings") in any existing table.
-    def update(self,table,item_id,mappings):
+    # this can update any set of columns ("mappings") in any existing table. criteria {'id':2222,'name':'me'}
+    def update(self,table,mappings,and_or,criteria):
         if(table!="User" and table!="VM" and table!="VMGroup" and table!="UserGroup"):
             raise DatabaseException("wrong update function for table type")
-        cursor=self._conn.execute('select count(*) from {0} where id = ?'.format(table),(item_id,))
+        
+        if(and_or=='or'):
+            and_or_length=3
+        elif(and_or=='and'):
+            and_or_length=4
+        else:
+            raise DatabaseException("Columns can only be 'or'ed or 'and'ed")
+        
+        where=""
+        for key in criteria.keys():
+            where+="{0} = ? {1} ".format(key,and_or)
+        where=where[:-and_or_length]
+        
+        cursor=self._conn.execute('select count(*) from {0} where {1}'.format(table,where),tuple(criteria.values()))
         if(cursor.fetchone()[0]!=1):
             raise DatabaseException("Update: 0/>1 rows found")
+        
         sets=""
         for key in dict(mappings).keys():
             if(type(mappings[key]) is str):
@@ -97,8 +111,9 @@ class VMDatabase:
             else:
                 sets+="{0} = {1},".format(key,mappings[key])
         sets=sets[:-1]
-        if(debug): print 'update {0} set {1} where id = {2}'.format(table,sets,item_id)
-        self._conn.execute('update {0} set {1} where id = ?'.format(table,sets),(item_id,))
+    
+        if(debug): print 'update {0} set {1} where {2}'.format(table,sets,where)
+        self._conn.execute('update {0} set {1} where {2}'.format(table,sets,where),tuple(criteria.values()))
         self._conn.commit()
     
     # this is updated separately because it has 2 identifiers: vmid/vmgid and uid/gid; rest is the same as above
@@ -142,6 +157,32 @@ class VMDatabase:
 #        print select_stmt
 #        print tuple(col_dict.values())
         cursor=self._conn.execute(select_stmt,tuple(col_dict.values()));
+        ls=cursor.fetchall()
+        #print ls[0]['vm_g_id']
+        return ls
+    
+    def getRowsWithCriteriaLike(self,table,what,and_or,col_dict):
+        # {'id':'1', 'name': gigi}
+        # check if we need the 'where' and get the length of the bool op
+        if(and_or=='or'):
+            and_or_length=3
+        elif(and_or=='and'):
+            and_or_length=4
+        elif(and_or==''):
+            select_stmt="select {0} from {1} ".format(what,table)
+        else:
+            raise DatabaseException("Columns can only be 'or'ed or 'and'ed")
+        
+        #add criteria
+        if(and_or=='and' or and_or=='or'):
+            select_stmt="select {0} from {1} where ".format(what,table)
+            for key in col_dict.keys():
+                select_stmt+="{0} like \'%{1}%\' {2} ".format(key,col_dict[key],and_or)
+            select_stmt=select_stmt[:-and_or_length]
+        
+        print select_stmt
+        print tuple(col_dict.values())
+        cursor=self._conn.execute(select_stmt);
         ls=cursor.fetchall()
         #print ls[0]['vm_g_id']
         return ls

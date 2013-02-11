@@ -11,20 +11,10 @@ import sys
 import time
 #too.. to parse it twice
 
-debug=0
+debug=1
 id_range_limit=500
 base_domain_location="/etc/libvirt/qemu/"
-base_disc_location="/tmp"
-vmoutdir=os.getcwd()+"/run"
 separator_len=150 #for printing entries in db
-#watcher_path="/opt/ncit-cloud/watcher.py"
-#starter_path="/opt/ncit-cloud/starter.py"
-#starter_path="/export/home/acs/stud/i/iustina_camelia.melinte/aa/starter.py"
-serverhost="10.42.0.2"
-
-
-#def_db_path="vm.db"
-#base_disc_location="/var/lib/libvirt/images/"
 
 class VMController:
     def __init__(self,conf):
@@ -89,6 +79,12 @@ class VMController:
             for ugid in args['user_group_s']['ids']:
                 self.db.deleteRowsWithCriteria("UserGroup",'and',{'id':ugid}) 
                 self.db.deleteRowsWithCriteria("Permission",'and',{'user_g_id':ugid}) 
+                # update User table 
+                rows=self.db.getRowsWithCriteriaLike('User','*', 'and', {"gid_list":ugid})
+                for row in rows:
+                    gid_list=ast.literal_eval(row['gid_list'])
+                    gid_list=tuple(y for y in gid_list if y!=ugid) #remove deleted ug from list
+                    self.db.update("User", {'gid_list':str(gid_list)}, 'and', {'id':row['id']})
         except db.DatabaseException as e:
             return e.err
         
@@ -98,7 +94,7 @@ class VMController:
         #self._initDB()
         try: 
             ugid=self.db.getOneRowWithCriteria('UserGroup','*','or',{'id':args['user_group_s'],'name':args['user_group_s']})['id']
-            self.db.update('UserGroup',ugid,{'name':args['name']}) 
+            self.db.update('UserGroup',{'name':args['name']},'and',{'id':ugid}) 
         except db.DatabaseException as e:
             return e.err
     
@@ -123,7 +119,7 @@ class VMController:
         if(not self.verify('isadmin',{'who':self.real_uid})):
             return "Not allowed"
         # UserGroup (id integer, name text, ip_range text)
-        row=(args['vm_group_id'],args['name'],args['ip_range']) #todo add iprange
+        row=(args['vm_group_id'],args['name'],args['ip_range']) 
         if(db.debug): print "row ",row
         try: 
             self.db.insert("VMGroup",row) 
@@ -139,6 +135,7 @@ class VMController:
             for ugid in args['vm_group_s']['ids']:
                 self.db.deleteRowsWithCriteria("VMGroup",'and',{'id':ugid})
                 self.db.deleteRowsWithCriteria("Permission",'and',{'vm_g_id':ugid}) 
+                self.db.update("VM", {'vmgid':1}, 'and', {'vmgid':ugid}) #reset vmg to default
         except db.DatabaseException as e:
             return e.err
         
@@ -148,7 +145,10 @@ class VMController:
         #self._initDB()
         try: 
             vmgid=self.db.getOneRowWithCriteria('VMGroup','*','or',{'id':args['vm_group_s'],'name':args['vm_group_s']})['id']
-            self.db.update('VMGroup',vmgid,{'name':args['name']}) 
+            if(args['name']):
+                self.db.update('VMGroup',{'name':args['name']},'and',{'id':vmgid}) 
+            if(args['ip_range']):
+                self.db.update('VMGroup',{'ip_range':args['ip_range']},'and',{'id':vmgid}) 
         except db.DatabaseException as e:
             return e.err
     
@@ -176,7 +176,6 @@ class VMController:
     
         #User (id, name, ip_range, gid_list,max_running_vm, max_storage,storage_folder,is_admin)
         # user_group_s is a mixture of group names and ids.. convert to ids only , eg ",31,admin, 3" >>(31, 0, 3)
-        #todo move this in validate
         self._initDB() 
         gids=[1] # default insert in group 'all_users'
         if(args['user_group_s']):
@@ -184,14 +183,17 @@ class VMController:
                 for gn in args['user_group_s']['names']:
                     row=self.db.getOneRowWithCriteria('UserGroup','*', 'and', {'name':gn})
                     gids.append(row['id'])
+                for gid in args['user_group_s']['ids']: 
+                    row=self.db.getOneRowWithCriteria('UserGroup','*', 'and', {'id':gid}) #only check if exists
+                    gids.append(gid)
             except db.DatabaseException as e:
                 return e.err 
 
-        if(db.debug): print "okgroups ",tuple(gids)
+        if(debug): print "okgroups ",tuple(gids)
         #gids_tuple=tuple(int(v) for v in re.findall("[a-zA-Z_0-9]+",gids_text))
         #todo verify gids are in bd
         row=(args['user_id'],args['name'],args['ip_range'],str(tuple(gids)),args['maxrun'],args['maxstor'],args['storage_dir'])
-        if(db.debug): print "row ",row
+        if(debug): print "row ",row
         try: 
             self.db.insert("User",row) 
         except db.DatabaseException as e:
@@ -208,12 +210,12 @@ class VMController:
             rows=self.db.getRowsWithCriteria('User','*', '', {})
             #User (id, name, ip_range, gid_list,max_running_vm, max_storage,storage_folder)
             print '-'*separator_len
-            print "%-5s %-22s %-18s %-10s %-16s %-13s %-100s"%('uid','name','ip_range','gid_list','max_running_vm','max_storage','storage_folder')
+            print "%-5s %-22s %-18s %-15s %-16s %-13s %-100s"%('uid','name','ip_range','gid_list','max_running_vm','max_storage','storage_folder')
             print '-'*separator_len
             for row in rows:
 #                print "%-5s %-22s %-18s %-10s %-16s %-13s %-100s"%(row['id'],row['name'],row['ip_range'],row['gid_list'],
 #                                                                  row['max_running_vm'],row['max_storage'],row['storage_folder'],)
-                print "%-5s %-22s %-18s %-10s %-16s %-13s %-100s"%tuple(row)
+                print "%-5s %-22s %-18s %-15s %-16s %-13s %-100s"%tuple(row)
         except db.DatabaseException as e:
             return e.err
         return
@@ -229,11 +231,60 @@ class VMController:
                 self.db.deleteRowsWithCriteria("Permission",'and',{'user_g_id':uid}) 
         except db.DatabaseException as e:
             return e.err
-#    
-#    def setUserDetail(self,user,detail,value):
-#        # getOneByNameOrId("User",user), scot uid
-#        # update("User",uid,dict(detail=value))...cum fac asta..#todo detail nu ar trebui sa fie string, poate puna lista de tuple
-#        pass
+
+    # --umod --user _id/name [--name _ --ug +|-_,_ --maxrun _ --maxstor _ --stordir _ ]
+    def modifyUser(self,args):
+        if(not self.verify('isadmin',{'who':self.real_uid})):
+            return "Not allowed"
+        
+        modifications={}
+        modifications['gid_list']=[]
+        
+        # previous gid list
+        try:
+            modifications['gid_list']=list(ast.literal_eval(self.db.getOneRowWithCriteria('User','*', 'or', {"id":args['user'],"name":args['user']})['gid_list']))
+        except db.DatabaseException as e:
+            return e.err 
+        
+        # add and remove specified user groups
+        if(args['user_group_s']):
+            allnames=args['user_group_s']['add']['names']+args['user_group_s']['del']['names']
+            allids=args['user_group_s']['add']['ids']+args['user_group_s']['del']['ids']
+            try: 
+                for gn in allnames:
+                    row=self.db.getOneRowWithCriteria('UserGroup','*', 'and', {'name':gn})
+                    if(gn in args['user_group_s']['add']['names']):
+                        if(not row['id'] in modifications['gid_list']):
+                            modifications['gid_list'].append(row['id'])
+                    if(gn in args['user_group_s']['del']['names']):
+                        if(row['id'] in modifications['gid_list']):
+                            modifications['gid_list'].remove(row['id'])
+                for gid in allids:
+                    row=self.db.getOneRowWithCriteria('UserGroup','*', 'and', {'id':gid}) #check if exists #would throw exc
+                    if(gid in args['user_group_s']['add']['ids']):
+                        if(not gid in modifications['gid_list']):
+                            modifications['gid_list'].append(gid)
+                    if(gid in args['user_group_s']['del']['ids']):
+                        if(gid in modifications['gid_list']):
+                            modifications['gid_list'].remove(gid)
+            except db.DatabaseException as e:
+                return e.err 
+            
+        modifications['gid_list']=str(tuple(modifications['gid_list']))
+            
+        if(args['name']):
+            modifications['name']=args['name']
+        if(args['maxrun']):
+            modifications['max_running_vm']=args['maxrun']
+        if(args['maxstor']):
+            modifications['max_storage']=args['maxstor']
+        if(args['storage_dir']):
+            modifications['storage_folder']=args['storage_dir']
+                
+        try: 
+            self.db.update("User", modifications, 'or', {"id":args['user'],"name":args['user']})
+        except db.DatabaseException as e:
+            return e.err
     ######################################## Permissions Ops ###################################### 
 
     
@@ -244,7 +295,6 @@ class VMController:
         if(not self.verify('isadmin',{'who':self.real_uid})):
             return "Not allowed"
         try:                 
-            #todo vm_group_s user_group_s
             #self.db.setPermissions(2,124,{'modify':0,'derive':0})
             if(args['user']):
                 user_id=self.db.getOneRowWithCriteria('User','*','or',{'id':args['user'],'name':args['user']})['id']
@@ -278,6 +328,23 @@ class VMController:
         except db.DatabaseException as e:
             return e.err
         return
+        
+    def deletePerms(self,args):
+        if(not self.verify('isadmin',{'who':self.real_uid})):
+            return "Not allowed"
+        try: 
+            if(args['user']):
+                user_id=self.db.getOneRowWithCriteria('User','*','or',{'id':args['user'],'name':args['user']})['id']
+            if(args['vm']):
+                vm_id=self.db.getOneRowWithCriteria('VM','*','or',{'id':args['vm'],'name':args['vm']})['id']
+            if(args['user_group_s']):
+                user_id=self.db.getOneRowWithCriteria('UserGroup','*','or',{'id':args['user_group_s'],'name':args['user_group_s']})['id']
+            if(args['vm_group_s']):
+                vm_id=self.db.getOneRowWithCriteria('VMGroup','*','or',{'id':args['vm_group_s'],'name':args['vm_group_s']})['id']
+            
+            self.db.deleteRowsWithCriteria("Permission",'and',{'user_g_id':user_id,'vm_g_id':vm_id}) 
+        except db.DatabaseException as e:
+            return e.err
         
     ######################################## VMs Ops ############################################## 
     
@@ -367,11 +434,7 @@ class VMController:
             if(debug): print "call create"
             storage=vmc.createDiscs("", discs_basename, storage_folder,args['storage'],'create',self.real_uid)
         
-        #uuid=vmc.genUUID()
-        # create domain /clone domain and change uuid name stordir..#todo
-
         # insert in db
-        # todo
         if(not args['base']): # if it has --base, then inhert the group, else insert in the default vmgroup
             vmgid=1 # default add to group all_vms
             if(args['vm_group_s']):
@@ -397,15 +460,10 @@ class VMController:
 
     def startVM(self,args):pass
     
+    # --vmrun --vm _id/name [--mem _ --smp _ --install --cdrom _ --isolate] 
     def runVM(self,args):#
-        # --vmrun --vm _id/name [--mem _ --smp _ --install --cdrom _ --isolate] 
         # install nu mere fara cdrom 
-        # err daca vm are deja base.
-
-        # scot vm_id
-        # pt uid si gids: getPermissions(uid, vm_id) , vrfy  run=1 , force_isolated suprascrie isolated,
         self._initDB()
-        
         try: 
             row=self.db.getOneRowWithCriteria('VM','*', 'or', {'id':args['vm'],'name':args['vm']})
             vm_id=int(row['id'])
@@ -431,8 +489,6 @@ class VMController:
         vmc=creator.VMCreator(self.conf)
         vmc.db=self.db
         
-#        disc_paths=discs.keys() 
-#        disc_paths.sort()       #put them in order : _0.qcow2,_1.qcow2 etc
         disc_paths=[discs[e]['path'] for e in discs.keys()]
         for disc in disc_paths:
             if(not os.path.exists(disc)):
@@ -451,10 +507,9 @@ class VMController:
         if(db.debug): print disc_paths
         if(not os.path.isdir(self.conf['vmoutdir'])):  #todo configurable,move in init
             os.mkdir(self.conf['vmoutdir'])
-#            print "vmout dir not here"
-#            exit(1)
+            os.chown(self.conf['vmoutdir'], int(self.real_uid), -1)
         vmoutfile=os.path.join(self.conf['vmoutdir'],str(vm_id)) 
-        
+
         #used for runing as a process , with --vmid
         #cmd="python starter.py --discs {0} --smp {1} --mem {2} --ip {3} --mac {4} --vmid {5} ".format(','.join(disc_paths),args['smp'],args['mem'],ip,mac,vmoutfile)
         
@@ -469,9 +524,9 @@ class VMController:
             cmd=cmd+" --install --cdrom {0} ".format(args['cdrom'])
             
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.bind((serverhost, 0)) #ask for a free port  
+        s.bind((self.conf['server_ip'], 0)) #ask for a free port  
         port=s.getsockname()[1] #get the port
-        cmd+=" --srvhost {0} --srvport {1} ".format(serverhost,port)
+        cmd+=" --srvhost {0} --srvport {1} ".format(self.conf['server_ip'],port)
         if(debug): print cmd
         
         cmd_watcher+=" &"
@@ -564,6 +619,46 @@ class VMController:
             return e.err
         return
     
+    # --vmmod --vm _id/name [--name _ --owner _ --derivable --noderivable]
+    def modifyVM(self,args):
+        if(not self.verify('isadmin',{'who':self.real_uid})):
+            return "Not allowed"
+        modifications={}
+
+        if(args['name']):
+            modifications['name']=args['name']
+        if(args['owner']):
+            try:
+                modifications['owner_id']=self.db.getOneRowWithCriteria('User','*','or',{'id':args['owner'],'name':args['owner']})['id']
+            except db.DatabaseException as e:
+                return e.err   
+        if(args['derivable']):
+            modifications['derivable']=1
+        if(args['noderivable']):
+            modifications['derivable']=0
+                
+        try: 
+            row=self.db.getOneRowWithCriteria('VM','*','or',{'id':args['vm'],'name':args['vm']})
+            vmid=row['id']
+            old_owner=row['owner_id']
+            
+            self.db.update("VM", modifications, 'and', {"id":vmid})
+            
+            derivable=row['derivable']
+            if(modifications.get('derivable')): #if user wants to modify
+                derivable=modifications['derivable'] #use below
+                self.db.setPermissions(old_owner,vmid,{'derive':derivable})
+            if(modifications.get('owner_id')):
+                # delete old owner permission
+                self.db.deleteRowsWithCriteria("Permission",'and',{'user_g_id':old_owner,'vm_g_id':vmid}) 
+                # add new owner permission
+                self.db.setPermissions(modifications['owner_id'], vmid,{'run':1,'modify':1,'derive':derivable,'force_isolated':0} )
+                #run/modify/forceisolate permissions are not kept
+        except db.DatabaseException as e:
+            return e.err
+
+    ######################################## Mapping Ops ############################################## 
+
     def listMapping(self,args):
         self._initDB()
         try:
@@ -625,6 +720,9 @@ class VMController:
             e=self.listUsers(args)
         elif(action=='user_del'):
             e=self.delUser(args)
+        elif(action=='user_mod'):
+            e=self.modifyUser(args)
+            
         elif(action=='vm_add'):
             e=self.addVM(args)
         elif(action=='vm_run'):
@@ -633,14 +731,21 @@ class VMController:
             e=self.delVM(args)
         elif(action=='vm_list'):
             e=self.listVM(args)
+        elif(action=='vm_mod'):
+            e=self.modifyVM(args)
+         
+        elif(action=='permset'):
+            e=self.setPermissions(args)   
         elif(action=='permlist'):
             e=self.listPerms(args)
+        elif(action=='permdel'):
+            e=self.deletePerms(args)
+                
         elif(action=='maplist'):
             e=self.listMapping(args)
         elif(action=='mapdel'):
             e=self.delMapping(args)
-        elif(action=='permset'):
-            e=self.setPermissions(args)
+        
         return e
 ################################################################################# test area
     

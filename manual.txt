@@ -1,0 +1,198 @@
+Latest version here:
+https://github.com/iustinam90/vm
+################################################ Comenzi
+
+--init --dbpath _path_to_file //face baza de date (creaza fisierul)
+
+--ugadd --name _ --ugid _ 
+--ugdel --ug _id/name,..
+--ugmod --ug _id/name [--name _] 
+--uglist
+
+--vmgadd --name _ --vmgid _ --iprange x.x.x.x-x.x.x.x
+--vmgdel --vmg _id/name,..
+--vmgmod --vmg _id/name [--name _  --iprange _]
+--vmglist
+
+--uadd --name _ --uid _ --stordir _ [-ug _id1/name1,..  --maxrun _(def=2) --maxstor _(def=133G) ] 
+--umod --user _id/name [--name _ --ug +|-_,_ --maxrun _ --maxstor _ --stordir _ ]
+--udel --user _id/name,.. //lista de id-uri
+--ulist 
+
+--vmadd --name _ [ --vmg _id1/name (!unul) --desc _ --derivable] --stor 1G,500M | --base _id/name | --usediscs path1,path2.. 
+--vmdel --vm _id/name,_id2/name2,..
+--vmrun --vm _id/name [--mem _ --smp _ --install --cdrom _ --isolate] 
+--vmmod --vm _id/name [--name _ --owner _ --derivable --noderivable] 
+--vmlist  
+
+--permset [+m,-d,+r,-i](at least one) --user|--ug _id/name  --vm|--vmg _id/name
+--permlist 
+--permdel --user|--ug _id/name  --vm|--vmg _id/name
+
+--maplist [--user| _id/name,.. &| --vm _id/name,..][-ug _][-vmg _]
+--mapdel --user _id/name &| --vm _id/name
+
+
+################################################ Tabelele
+
+User (id integer, name text, ip_range text, gid_list text, max_running_vm integer, max_storage integer,storage_folder text)
+VM (id integer, name text, owner_id integer, vmgid text, storage text, derivable integer, base_id integer,mac text,ip text,vnc text,desc text,started integer)
+Permission (user_g_id integer, vm_g_id integer, run integer, modify integer, derive integer, force_isolated integer)
+Mapping (user_g_id integer, vm_g_id integer, ip text, mac text, isolated integer, exechost text, vncport integer, tap text, date text)
+UserGroup (id integer, name text)
+VMGroup (id integer, name text, ip_range text)
+
+
+################################################ Conventii
+- la initializare db este creat un VMGroup default si 2 UserGroups: unul deafult si unul pt admini(id 0).
+
+- id-urile pentru grupuri sunt <500 (tabela Mapping si Permission poate avea User/UserGroup - VM/VMGroup). Asta poate fi schimbat din controller.py, id_range_limit=500
+
+- un user poate apartine mai multor UserGroups.
+- un vm poate apartine unui singur VMGroup
+- derivarea template-urilor implica folosirea aceluiasi VMGroup de catre vm-urile derivate (acelasi range de IP, si respecta permisiunile asignate userului/unuia din UserGroups pe acel VMGroup, gen force_isolate)
+- izolarea template-urilor se poate face doar pt VMGroup (e o mica filozofie aici), nu pt VM, setand permsiunea +i (User/UserGroup -- VMGroup)
+
+- alocarea IP: la pornire vm este gasit un IP nefolosit - care nu e in Mappings - si e introdusa o mapare statica in DHCP, daca nu exista deja. (@razvan, daca puneam la addVM iroseam aiurea adresele pe vm-uri nepornite pt ca un user are limita doar pe nr vm pornite, nu create). MAC-ul este generat folosind aceiasi ultimi 16 biti ca IP-ul. Maparile din db sunt sterse automat cand inceteaza procesul kvm de pe exechost.
+
+
+Naming:
+- toate numele sunt verificate cu [a-zA-Z_0-9]+
+- discurile : [uid]_[nume_vm]_0.qcow2, [uid]_[nume_vm]_1.qcow2, etc
+
+
+################################################ Autorizarea
+- doar un user din grupul admin poate face add/delete/modify user/groups/permissions/mappings (cele din urma doar daca se intampla ceva si nu s-au sters automat)
+- actunile maplist, vmlist si permlist date ca user normal vad doar datele care corespund utilizatorului
+ 
+
+Pentru useri normali:
+vmadd --base : este verificata existenta permisiunii 'derive' pt uid/ugids-vmid/vmgid (4 combinatii)     
+vmrun : verifica perm 'run' pe uid/ugids - vm/vmg; daca nu e specificat --isolate si exista perm 'force_isolated' pe uid/ugid - vmid/vmgid atunci nu este permisa pornirea
+vmmod -- admin  
+vmdel -- doar admin/owner
+
+
+################################################ Use case
+# help
+vmapp --help
+vmapp --[u|ug|vm|vmg][add|del|mod]   eg. vmapp --uadd , vmapp --vmadd , etc
+
+# vm.ini
+---------------------------------------
+[conf]
+default_db = /opt/ncit-cloud/vm.db
+default_ip_range = 10.42.30.1-10.42.30.254
+default_admin_uid = 0
+default_admin_home = /export/home/acs/stud/i/iustina_camelia.melinte/aa/def_home
+
+dhcp_keyname = omapi_key
+dhcp_secret = omNuIQGoVeIa2WggD54tVF19jS1P6JAKyUWVR1hllNP+5koQq8dIC8U4euJaM+kplJSSiu685SlTyvk4FB1YcQ==
+dhcp_server = 127.0.0.1
+dhcp_port = 9991
+
+id_range_limit=500
+base_domain_location = /export/home/acs/stud/i/iustina_camelia.melinte/aa/templates
+base_disc_location = /export/home/acs/stud/i/iustina_camelia.melinte/aa/templates
+vmoutdir = run 
+separator_len = 150
+
+watcher_path=/opt/ncit-cloud/watcher.py
+starter_path=/opt/ncit-cloud/starter.py
+
+server_ip=10.42.0.2
+---------------------------------------
+
+# commands to verify 
+vmapp --uglist #UserGroups
+vmapp --vmglist #VMGroups 
+vmapp --ulist #Users
+vmapp --vmlist #VMs
+vmapp --maplist #Mappings ip-mac-exechost-vnc (running)
+
+### story
+..admin (root)
+# modify vm.ini
+vmapp --init --dbpath /opt/ncit-cloud/vm.db
+
+Creating a UserGroup, a VMGroup, a template VM and setting isolated permission:
+
+vmapp --ugadd --name studs --ugid 10  
+vmapp --vmgadd --name lab --vmgid 3 --iprange 10.42.31.1-10.42.31.254
+
+# add users to group
+vmapp --uadd --name iustina --uid 17003 --ug studs --stordir /export/home/acs/stud/i/iustina_camelia.melinte/aa/
+vmapp --uadd --name alex --uid 10431 --ug studs --stordir /export/home/ncit-cluster/stud/a/alexandru.bujor/sry
+
+# add a template vm to the "lab" VMGroup
+# a. with preexisting disc:
+vmapp --vmadd --name gsr_vm --vmg lab --derivable --usediscs /export/home/acs/stud/i/iustina_camelia.melinte/aa/templates/0_gsr_vm_0.qcow2 
+
+# b. with new discs
+vmapp --vmadd --name gsr_vm1 --vmg lab --derivable --stor 4G,500M
+
+# set derivable and force_isolated for "studs" UserGroup on "lab" VMgroup
+vmapp --permset +d,+i --ug studs --vmg lab
+vmapp --permlist
+------------------------------------------------------------------------------------------------------------------------------------------------------
+uid   vmid run  modify derive force_isolated
+------------------------------------------------------------------------------------------------------------------------------------------------------
+0     1001 1    1      1      0             
+0     1002 1    1      1      0             
+10    3    0    0      1      1             
+17003 1003 1    1      0      0   
+
+
+### as user Iustina
+vmapp --vmadd --name ivm --base gsr_vm
+vmapp --vmrun --vm ivm # not allowed because of the above permission
+vmapp --vmrun --vm ivm --isolate
+vmapp --maplist
+
+
+################################################ Exemple:                                    
+[root@fep-62-2 ncit-cloud]# vmapp --uglist
+------------------------------------------------------------------------------------------------------------------------------------------------------
+id     name
+------------------------------------------------------------------------------------------------------------------------------------------------------
+0      admin
+1      all_users
+10     studs
+[root@fep-62-2 ncit-cloud]# vmapp --vmglist
+------------------------------------------------------------------------------------------------------------------------------------------------------
+id     name                           ip_range
+------------------------------------------------------------------------------------------------------------------------------------------------------
+1      all_vms                        10.42.30.1-10.42.30.254
+3      lab                            10.42.31.1-10.42.31.254
+[root@fep-62-2 ncit-cloud]# vmapp --maplist
+------------------------------------------------------------------------------------------------------------------------------------------------------
+uid    vmid  ip               mac                isolated  exechost                vnc   tap   date                 
+------------------------------------------------------------------------------------------------------------------------------------------------------
+17003  1003  10.42.31.1       de:af:de:af:1f:01  1                                             2013-02-11 19:50:28  
+[root@fep-62-2 ncit-cloud]# vmapp --perml
+------------------------------------------------------------------------------------------------------------------------------------------------------
+uid   vmid run  modify derive force_isolated
+------------------------------------------------------------------------------------------------------------------------------------------------------
+0     1001 1    1      1      0             
+0     1002 1    1      1      0             
+10    3    0    0      1      1             
+17003 1003 1    1      0      0             
+
+[root@fep-62-2 ncit-cloud]# vmapp --vml
+------------------------------------------------------------------------------------------------------------------------------------------------------
+vmid  name                   owner_id   vm_group   derivable   base_id   desc                           storage
+------------------------------------------------------------------------------------------------------------------------------------------------------
+1001  gsr_vm                 0          3          1           0                                        [['/export/home/acs/stud/i/iustina_camelia.melinte/aa/templates/0_gsr_vm_0.qcow2', 7516]]
+1002  gsr_vm1                0          3          1           0                                        [['/export/home/acs/stud/i/iustina_camelia.melinte/aa/templates/0_gsr_vm1_0.qcow2', 4000], ['/export/home/acs/stud/i/iustina_camelia.melinte/aa/templates/0_gsr_vm1_1.qcow2', 500]]
+1003  ivm                    17003      3          0           1001                                     [[u'/export/home/acs/stud/i/iustina_camelia.melinte/aa/17003_ivm_0.qcow2', 7516]]
+[root@fep-62-2 ncit-cloud]# vmapp --ulist
+------------------------------------------------------------------------------------------------------------------------------------------------------
+uid   name                   ip_range           gid_list        max_running_vm   max_storage   storage_folder                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------
+0     admin1                                    (0,)            1000             133000        /export/home/acs/stud/i/iustina_camelia.melinte/aa/def_home                                         
+10431 alex                                      (1, 10)         2                133000        /export/home/ncit-cluster/stud/a/alexandru.bujor/sry                                                
+17003 iustina                                   (1, 10)         2                133000        /export/home/acs/stud/i/iustina_camelia.melinte/aa/   
+
+
+
+
